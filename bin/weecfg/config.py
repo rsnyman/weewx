@@ -1,5 +1,5 @@
 #
-#    Copyright (c) 2009-2020 Tom Keffer <tkeffer@gmail.com> and
+#    Copyright (c) 2009-2021 Tom Keffer <tkeffer@gmail.com> and
 #                            Matthew Wall
 #
 #    See the file LICENSE.txt for your full rights.
@@ -22,10 +22,11 @@ stn_info_defaults = {
     'latitude' : "0.0",
     'longitude': "0.0",
     'altitude': "0, meter",
-    'units': 'metricwx',
+    'unit_system': 'metricwx',
     'register_this_station': 'false',
     'station_type': 'Simulator',
     'driver': 'weewx.drivers.simulator',
+    'lang' : 'en',
 }
 
 
@@ -49,10 +50,10 @@ class ConfigEngine(object):
         # Check for errors in the options.
         #
 
-        # We can do one and only one of install, upgrade, and reconfigure:
-        if (options.install and options.upgrade) \
-                or (options.install and options.reconfigure) \
-                or (options.upgrade and options.reconfigure):
+        # There must be one, and only one, of options install, upgrade, and reconfigure
+        if sum([options.install is not None,
+                options.upgrade is not None,
+                options.reconfigure is not None]) != 1:
             sys.exit("Must specify one and only one of --install, --upgrade, or --reconfigure.")
 
         # Check for missing --dist-config
@@ -77,6 +78,14 @@ class ConfigEngine(object):
         # First, fiddle with option --altitude to convert it into a list:
         if options.altitude:
             options.altitude = options.altitude.split(",")
+
+        # Option "--unit-system" used to be called "--units". For backwards compatibility, allow
+        # both.
+        if options.units:
+            if options.unit_system:
+                sys.exit("Specify either option --units or option --unit-system, but not both")
+            options.unit_system = options.units
+            delattr(options, "units")
 
         if options.install or options.upgrade:
             # These options require a distribution config file.
@@ -133,7 +142,7 @@ class ConfigEngine(object):
         for values."""
 
         # Start with values from the config file:
-        stn_info = weecfg.get_station_info(config_dict)
+        stn_info = weecfg.get_station_info_from_config(config_dict)
 
         # Get command line overrides, and apply them to stn_info. If that leaves a value
         # unspecified, then get it from the defaults.

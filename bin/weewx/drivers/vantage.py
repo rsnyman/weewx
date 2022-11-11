@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-#    Copyright (c) 2009-2020 Tom Keffer <tkeffer@gmail.com>
+#    Copyright (c) 2009-2022 Tom Keffer <tkeffer@gmail.com>
 #
 #    See the file LICENSE.txt for your full rights.
 #
@@ -18,6 +18,7 @@ import struct
 import sys
 import time
 
+import six
 from six import int2byte, indexbytes, byte2int
 from six.moves import map
 from six.moves import zip
@@ -26,13 +27,13 @@ import weeutil.weeutil
 import weewx.drivers
 import weewx.engine
 import weewx.units
-from weeutil.weeutil import to_int
+from weeutil.weeutil import to_int, to_sorted_string
 from weewx.crc16 import crc16
 
 log = logging.getLogger(__name__)
 
 DRIVER_NAME = 'Vantage'
-DRIVER_VERSION = '3.2.1'
+DRIVER_VERSION = '3.5.2'
 
 
 def loader(config_dict, engine):
@@ -89,32 +90,34 @@ class BaseWrapper(object):
         
         If unsuccessful, an exception of type weewx.WakeupError is thrown"""
 
-        for count in range(max_tries):
+        for count in range(1, max_tries + 1):
             try:
-                # Wake up console and cancel pending LOOP data.
-                # First try a gentle wake up
+                # Clear out any pending input or output characters:
+                self.flush_output()
+                self.flush_input()
+                # It can be hard to get the console's attention, particularly
+                # when in the middle of a LOOP command. Send a whole bunch of line feeds,
+                # then flush everything, then look for the \n\r acknowledgment
+                self.write(b'\n\n\n')
+                time.sleep(0.5)
+                self.flush_input()
                 self.write(b'\n')
                 _resp = self.read(2)
                 if _resp == b'\n\r':  # LF, CR = 0x0a, 0x0d
-                    # We're done; the console accepted our cancel LOOP command; nothing to flush
-                    log.debug("Gentle wake up of console successful")
+                    # We're done; the console accepted our cancel LOOP command.
+                    log.debug("Successfully woke up Vantage console")
                     return
-                # That didn't work. Try a rude wake up.
-                # Flush any pending LOOP packets
-                self.flush_input()
-                # Look for the acknowledgment of the sent '\n'
-                _resp = self.read(2)
-                if _resp == b'\n\r':
-                    log.debug("Rude wake up of console successful")
-                    return
-                print("Unable to wake up console... sleeping")
-                time.sleep(self.wait_before_retry)
-                print("Unable to wake up console... retrying")
-            except weewx.WeeWxIOError:
-                pass
-            log.debug("Retry #%d failed", count)
+                else:
+                    log.debug("Bad wake-up response from Vantage console: %s", _resp)
+            except weewx.WeeWxIOError as e:
+                log.debug("Wake up try %d failed. Exception: %s", e)
 
-        log.error("Unable to wake up console")
+            log.debug("Retry #%d unable to wake up console... sleeping", count)
+            print("Unable to wake up console... sleeping")
+            time.sleep(self.wait_before_retry)
+            print("Unable to wake up console... retrying")
+
+        log.error("Unable to wake up Vantage console")
         raise weewx.WakeupError("Unable to wake up Vantage console")
 
     def send_data(self, data):
@@ -130,7 +133,7 @@ class BaseWrapper(object):
         # Look for the acknowledging ACK character
         _resp = self.read()
         if _resp != _ack: 
-            log.error("No <ACK> received from console")
+            log.error("send_data: no <ACK> received from Vantage console")
             raise weewx.WeeWxIOError("No <ACK> received from Vantage console")
     
     def send_data_with_crc16(self, data, max_tries=3):
@@ -146,18 +149,19 @@ class BaseWrapper(object):
         _data_with_crc = data + struct.pack(">H", _crc)
         
         # Retry up to max_tries times:
-        for count in range(max_tries):
+        for count in range(1, max_tries + 1):
             try:
                 self.write(_data_with_crc)
                 # Look for the acknowledgment.
                 _resp = self.read()
                 if _resp == _ack:
                     return
-            except weewx.WeeWxIOError:
-                pass
-            log.debug("send_data_with_crc16; try #%d", count + 1)
+                else:
+                    log.debug("send_data_with_crc16 try #%d bad <ack>: %s", count, _resp)
+            except weewx.WeeWxIOError as e:
+                log.debug("send_data_with_crc16 try #%d exception: %s", count, e)
 
-        log.error("Unable to pass CRC16 check while sending data")
+        log.error("Unable to pass CRC16 check while sending data to Vantage console")
         raise weewx.CRCError("Unable to pass CRC16 check while sending data to Vantage console")
 
     def send_command(self, command, max_tries=3):
@@ -165,15 +169,15 @@ class BaseWrapper(object):
         
         Any response from the console is split on \n\r characters and returned as a list."""
 
-        for count in range(max_tries):
+        for count in range(1, max_tries + 1):
             try:
                 self.wakeup_console(max_tries=max_tries)
 
                 self.write(command)
                 # Takes some time for the Vantage to react and fill up the buffer. Sleep for a bit:
                 time.sleep(self.command_delay)
-                # Can't use function serial.readline() because the VP responds with \n\r, not just \n.
-                # So, instead find how many bytes are waiting and fetch them all
+                # Can't use function serial.readline() because the VP responds with \n\r,
+                # not just \n. So, instead find how many bytes are waiting and fetch them all
                 nc = self.queued_bytes()
                 _buffer = self.read(nc)
                 # Split the buffer on the newlines
@@ -182,16 +186,16 @@ class BaseWrapper(object):
                 if _buffer_list[0] == b'OK':
                     # Return the rest:
                     return _buffer_list[1:]
+                else:
+                    log.debug("send_command; try #%d failed. Response: %s", count, _buffer_list[0])
+            except weewx.WeeWxIOError as e:
+                # Caught an error. Log, then keep trying...
+                log.debug("send_command; try #%d failed. Exception: %s", count, e)
+        
+        msg = "Max retries exceeded while sending command %s" % command
+        log.error(msg)
+        raise weewx.RetriesExceeded(msg)
 
-            except weewx.WeeWxIOError:
-                # Caught an error. Keep trying...
-                pass
-            log.debug("send_command; try #%d failed", count + 1)
-        
-        log.error("Max retries exceeded while sending command %s", command)
-        raise weewx.RetriesExceeded("Max retries exceeded while sending command %s" % command)
-    
-        
     def get_data_with_crc16(self, nbytes, prompt=None, max_tries=3):
         """Get a packet of data and do a CRC16 check on it, asking for retransmit if necessary.
         
@@ -212,16 +216,16 @@ class BaseWrapper(object):
         first_time = True
         _buffer = b''
 
-        for count in range(max_tries):
+        for count in range(1, max_tries + 1):
             try:
                 if not first_time: 
                     self.write(_resend)
                 _buffer = self.read(nbytes)
                 if crc16(_buffer) == 0:
                     return _buffer
-                log.debug("Get_data_with_crc16; try #%d failed. CRC error", count + 1)
+                log.debug("Get_data_with_crc16; try #%d failed. CRC error", count)
             except weewx.WeeWxIOError as e:
-                log.debug("Get_data_with_crc16; try #%d failed: %s", count + 1, e)
+                log.debug("Get_data_with_crc16; try #%d failed: %s", count, e)
             first_time = False
 
         if _buffer:
@@ -487,6 +491,12 @@ class Vantage(weewx.drivers.AbstractDevice):
         [Optional. Default is 2]
 
         loop_request: Requested packet type. 1=LOOP; 2=LOOP2; 3=both.
+
+        loop_batch: How many LOOP packets to get in a single  batch.
+        [Optional. Default is 200]
+
+        max_batch_errors: How many errors to allow in a batch before a restart.
+        [Optional. Default is 3]
         """
 
         log.debug('Driver version is %s', DRIVER_VERSION)
@@ -497,9 +507,12 @@ class Vantage(weewx.drivers.AbstractDevice):
         self.max_tries  = to_int(vp_dict.get('max_tries', 4))
         self.iss_id     = to_int(vp_dict.get('iss_id'))
         self.model_type = to_int(vp_dict.get('model_type', 2))
-        if self.model_type not in list(range(1, 3)):
+        if self.model_type not in (1, 2):
             raise weewx.UnsupportedFeature("Unknown model_type (%d)" % self.model_type)
         self.loop_request = to_int(vp_dict.get('loop_request', 1))
+        log.debug("Option loop_request=%d", self.loop_request)
+        self.loop_batch = to_int(vp_dict.get('loop_batch', 200))
+        self.max_batch_errors = to_int(vp_dict.get('max_batch_errors', 3))
 
         self.save_day_rain = None
         self.max_dst_jump = 7200
@@ -529,7 +542,7 @@ class Vantage(weewx.drivers.AbstractDevice):
             # Get LOOP packets in big batches This is necessary because there is
             # an undocumented limit to how many LOOP records you can request
             # on the VP (somewhere around 220).
-            for _loop_packet in self.genDavisLoopPackets(200):
+            for _loop_packet in self.genDavisLoopPackets(self.loop_batch):
                 yield _loop_packet
 
     def genDavisLoopPackets(self, N=1):
@@ -542,36 +555,44 @@ class Vantage(weewx.drivers.AbstractDevice):
         """
 
         log.debug("Requesting %d LOOP packets.", N)
-        
-        self.port.wakeup_console(self.max_tries)
-        
-        if self.loop_request == 1:
-            # If asking for old-fashioned LOOP1 data, send the older command in case the
-            # station does not support the LPS command:
-            self.port.send_data(b"LOOP %d\n" % N)
-        else:
-            # Request N packets of type "loop_request":
-            self.port.send_data(b"LPS %d %d\n" % (self.loop_request, N))
 
-        for loop in range(N):
-            for count in range(self.max_tries):
-                try:
-                    loop_packet = self._get_packet()
-                except weewx.WeeWxIOError as e:
-                    log.error("LOOP try #%d; error: %s", count + 1, e)
+        attempt = 1
+        while attempt <= self.max_batch_errors:
+            try:
+                self.port.wakeup_console(self.max_tries)
+                if self.loop_request == 1:
+                    # If asking for old-fashioned LOOP1 data, send the older command in case the
+                    # station does not support the LPS command:
+                    self.port.send_data(b"LOOP %d\n" % N)
                 else:
+                    # Request N packets of type "loop_request":
+                    self.port.send_data(b"LPS %d %d\n" % (self.loop_request, N))
+
+                for loop in range(N):
+                    loop_packet = self._get_packet()
                     yield loop_packet
-                    break
-            else:
-                log.error("LOOP max tries (%d) exceeded.", self.max_tries)
-                raise weewx.RetriesExceeded("Max tries exceeded while getting LOOP data.")
+
+            except weewx.WeeWxIOError as e:
+                log.error("LOOP batch try #%d; error: %s", attempt, e)
+                attempt += 1
+        else:
+            msg = "LOOP max batch errors (%d) exceeded." % self.max_batch_errors
+            log.error(msg)
+            raise weewx.RetriesExceeded(msg)
 
     def _get_packet(self):
         """Get a single LOOP packet"""
         # Fetch a packet...
         _buffer = self.port.read(99)
         # ... see if it passes the CRC test ...
-        if crc16(_buffer):
+        crc = crc16(_buffer)
+        if crc:
+            if weewx.debug > 1:
+                log.error("LOOP buffer failed CRC check. Calculated CRC=%d" % crc)
+                if six.PY2:
+                    log.error("Buffer: " + "".join("\\x%02x" % ord(c) for c in _buffer))
+                else:
+                    log.error("Buffer: %s", _buffer)
             raise weewx.CRCError("LOOP buffer failed CRC check")
         # ... decode it ...
         loop_packet = self._unpackLoopPacket(_buffer[:95])
@@ -587,20 +608,20 @@ class Vantage(weewx.drivers.AbstractDevice):
         yields: a sequence of dictionaries containing the data
         """
 
-        count = 0
-        while count < self.max_tries:
+        count = 1
+        while count <= self.max_tries:
             try:            
                 for _record in self.genDavisArchiveRecords(since_ts):
-                    # Successfully retrieved record. Set count back to zero.
-                    count = 0
+                    # Successfully retrieved record. Set count back to one.
+                    count = 1
                     since_ts = _record['dateTime']
                     yield _record
                 # The generator loop exited. We're done.
                 return
             except weewx.WeeWxIOError as e:
-                # Problem. Increment retry count
-                count += 1
+                # Problem. Log, then increment count
                 log.error("DMPAFT try #%d; error: %s", count, e)
+                count += 1
 
         log.error("DMPAFT max tries (%d) exceeded.", self.max_tries)
         raise weewx.RetriesExceeded("Max tries exceeded while getting archive data.")
@@ -675,10 +696,16 @@ class Vantage(weewx.drivers.AbstractDevice):
             # The starting index for pages other than the first is always zero
             _start_index = 0
 
-    def genArchiveDump(self):
-        """A generator function to return all archive packets in the memory of a Davis Vantage station.
-        
-        yields: a sequence of dictionaries containing the data
+    def genArchiveDump(self, progress_fn=None):
+        """
+        A generator function to return all archive packets in the memory of a Davis Vantage station.
+
+        Args:
+            progress_fn: A function that will be called before every page request. It should have
+            a single argument: the page number. If set to None, no progress will be reported.
+
+        Yields: a sequence of dictionaries containing the data
+
         """
         import weewx.wxformulas
         
@@ -691,6 +718,9 @@ class Vantage(weewx.drivers.AbstractDevice):
         
         # Cycle through the pages...
         for ipage in range(512):
+            # If requested, provide users with some feedback:
+            if progress_fn:
+                progress_fn(ipage)
             # ... get a page of archive data
             _page = self.port.get_data_with_crc16(267, prompt=_ack, max_tries=self.max_tries)
             # Now extract each record from the page
@@ -788,7 +818,7 @@ class Vantage(weewx.drivers.AbstractDevice):
                 # Caught an error. Keep retrying...
                 continue
         log.error("Max retries exceeded while getting time")
-        raise weewx.RetriesExceeded("While getting console time")
+        raise weewx.RetriesExceeded("Max retries exceeded while getting time")
             
     def setTime(self):
         """Set the clock on the Davis Vantage console"""
@@ -816,7 +846,7 @@ class Vantage(weewx.drivers.AbstractDevice):
                 # Caught an error. Keep retrying...
                 continue
         log.error("Max retries exceeded while setting time")
-        raise weewx.RetriesExceeded("While setting console time")
+        raise weewx.RetriesExceeded("Max retries exceeded while setting time")
     
     def setDST(self, dst='auto'):
         """Turn DST on or off, or set it to auto.
@@ -1142,7 +1172,7 @@ class Vantage(weewx.drivers.AbstractDevice):
                 # Caught an error. Keey trying...
                 continue
         log.error("Max retries exceeded while clearing log")
-        raise weewx.RetriesExceeded("While clearing log")
+        raise weewx.RetriesExceeded("Max retries exceeded while clearing log")
     
     def getRX(self):
         """Returns reception statistics from the console.
@@ -1377,7 +1407,7 @@ class Vantage(weewx.drivers.AbstractDevice):
         nbytes = struct.calcsize(v_format)
         # Don't bother waking up the console for the first try. It's probably
         # already awake from opening the port. However, if we fail, then do a
-        # wakeup.
+        # wake up.
         firsttime = True
         
         command = b"EEBRD %X %X\n" % (offset, nbytes)
@@ -1392,9 +1422,10 @@ class Vantage(weewx.drivers.AbstractDevice):
                 return _value
             except weewx.WeeWxIOError:
                 continue
-        
-        log.error("Max retries exceeded while getting EEPROM data at address 0x%X", offset)
-        raise weewx.RetriesExceeded("While getting EEPROM data value at address 0x%X" % offset)
+
+        msg = "While getting EEPROM data value at address 0x%X" % offset
+        log.error(msg)
+        raise weewx.RetriesExceeded(msg)
         
     @staticmethod
     def _port_factory(vp_dict):
@@ -1461,6 +1492,9 @@ class Vantage(weewx.drivers.AbstractDevice):
         }
         # Now we need to map the raw values to physical units.
         for _type in raw_loop_packet:
+            if _type in extra_sensors and self.hardware_type == 17:
+                # Vantage Vues do not support extra sensors. Skip them.
+                continue
             # Get the mapping function for this type. If there is
             # no such function, supply a lambda function that returns None
             func = _loop_map.get(_type, lambda p, k: None)
@@ -1535,6 +1569,9 @@ class Vantage(weewx.drivers.AbstractDevice):
                                                     raw_archive_record['wind_samples'])
 
         for _type in raw_archive_record:
+            if _type in extra_sensors and self.hardware_type == 17:
+                # VantageVues do not support extra sensors. Skip them.
+                continue
             # Get the mapping function for this type. If there is no such
             # function, supply a lambda function that will just return None
             func = _archive_map.get(_type, lambda p, k: None)
@@ -1653,6 +1690,15 @@ rec_types_B, fmt_B = list(zip(*rec_B_schema))
 rec_A_struct = struct.Struct('<' + ''.join(fmt_A))
 rec_B_struct = struct.Struct('<' + ''.join(fmt_B))
 
+# These are extra sensors, not found on the Vues.
+extra_sensors = {
+    'leafTemp1', 'leafTemp2', 'leafWet1', 'leafWet2',
+    'soilTemp1', 'soilTemp2', 'soilTemp3', 'soilTemp4',
+    'extraHumid1', 'extraHumid2', 'extraTemp1', 'extraTemp2', 'extraTemp3',
+    'soilMoist1', 'soilMoist2', 'soildMoist3', 'soilMoist4'
+}
+
+
 def _rxcheck(model_type, interval, iss_id, number_of_wind_samples):
     """Gives an estimate of the fraction of packets received.
     
@@ -1746,11 +1792,13 @@ def _decode_windSpeed_H(p, k):
 # This dictionary maps a type key to a function. The function should be able to
 # decode a sensor value held in the LOOP packet in the internal, Davis form into US
 # units and return it.
+# NB: 5/28/2022. In a private email with Davis support, they say that leafWet3 and leafWet4 should
+# always be ignored. They are not supported.
 _loop_map = {
     'altimeter'       : lambda p, k: float(p[k]) / 1000.0 if p[k] else None,
     'bar_calibration' : lambda p, k: float(p[k]) / 1000.0 if p[k] else None,
     'bar_offset'      : lambda p, k: float(p[k]) / 1000.0 if p[k] else None,
-    'bar_reduction'   : lambda p, k: float(p[k]) / 1000.0 if p[k] else None,
+    'bar_reduction'   : lambda p, k: p[k],
     'barometer'       : lambda p, k: float(p[k]) / 1000.0 if p[k] else None,
     'consBatteryVoltage': lambda p, k: float((p[k] * 300) >> 9) / 100.0,
     'dayET'           : lambda p, k: float(p[k]) / 1000.0,
@@ -1791,8 +1839,8 @@ _loop_map = {
     'leafTemp4'       : lambda p, k: float(p[k] - 90) if p[k] != 0xff else None,
     'leafWet1'        : lambda p, k: float(p[k]) if p[k] != 0xff else None,
     'leafWet2'        : lambda p, k: float(p[k]) if p[k] != 0xff else None,
-    'leafWet3'        : lambda p, k: float(p[k]) if p[k] != 0xff else None,
-    'leafWet4'        : lambda p, k: float(p[k]) if p[k] != 0xff else None,
+    'leafWet3'        : lambda p, k: None,  # Vantage supports only 2 leaf wetness sensors
+    'leafWet4'        : lambda p, k: None,
     'monthET'         : lambda p, k: float(p[k]) / 100.0,
     'monthRain'       : _decode_rain,
     'outHumidity'     : lambda p, k: float(p[k]) if p[k] != 0xff else None,
@@ -1820,15 +1868,15 @@ _loop_map = {
     'soilTemp4'       : lambda p, k: float(p[k] - 90) if p[k] != 0xff else None,
     'stormRain'       : _decode_rain,
     'stormStart'      : _loop_date,
-    'sunrise'         : lambda p, k: 3600 * (p[k] / 100) + 60 * (p[k] % 100),
-    'sunset'          : lambda p, k: 3600 * (p[k] / 100) + 60 * (p[k] % 100),
+    'sunrise'         : lambda p, k: 3600 * (p[k] // 100) + 60 * (p[k] % 100),
+    'sunset'          : lambda p, k: 3600 * (p[k] // 100) + 60 * (p[k] % 100),
     'THSW'            : lambda p, k: float(p[k]) if p[k] & 0xff != 0xff else None,
     'trendIcon'       : lambda p, k: p[k],
     'txBatteryStatus' : lambda p, k: int(p[k]),
     'UV'              : lambda p, k: float(p[k]) / 10.0 if p[k] != 0xff else None,
     'windchill'       : lambda p, k: float(p[k]) if p[k] & 0xff != 0xff else None,
     'windDir'         : lambda p, k: (float(p[k]) if p[k] != 360 else 0) if p[k] and p[k] != 0x7fff else None,
-    'windGust10'      : _decode_windSpeed_H,
+    'windGust10'      : lambda p, k: float(p[k]) if p[k] != 0xff else None,
     'windGustDir10'   : lambda p, k: (float(p[k]) if p[k] != 360 else 0) if p[k] and p[k] != 0x7fff else None,
     'windSpeed'       : lambda p, k: float(p[k]) if p[k] != 0xff else None,
     'windSpeed10'     : _decode_windSpeed_H,
@@ -1903,14 +1951,11 @@ class VantageService(Vantage, weewx.engine.StdService):
         self.bind(weewx.STARTUP, self.startup)        
         self.bind(weewx.NEW_LOOP_PACKET,    self.new_loop_packet)
         self.bind(weewx.END_ARCHIVE_PERIOD, self.end_archive_period)
-        self.bind(weewx.NEW_ARCHIVE_RECORD, self.new_archive_record)
 
     def startup(self, event):  # @UnusedVariable
         self.max_loop_gust = 0.0
         self.max_loop_gustdir = None
-        self.loop_data = {'txBatteryStatus': None,
-                          'consBatteryVoltage': None}
-        
+
     def closePort(self):
         # Now close my superclass's port:
         Vantage.closePort(self)
@@ -1928,20 +1973,11 @@ class VantageService(Vantage, weewx.engine.StdService):
         event.packet['windGust'] = self.max_loop_gust
         event.packet['windGustDir'] = self.max_loop_gustdir
         
-        # Save the battery statuses:
-        for k in self.loop_data:
-            self.loop_data[k] = event.packet.get(k)
-        
-    def end_archive_period(self, event):  # @UnusedVariable
+    def end_archive_period(self, event):
         """Zero out the max gust seen since the start of the record"""
         self.max_loop_gust = 0.0
         self.max_loop_gustdir = None
         
-    def new_archive_record(self, event):
-        """Add the battery status to the archive record."""
-        # Add the last battery status:
-        event.record.update(self.loop_data)
-
 
 #===============================================================================
 #                      Class VantageConfigurator
@@ -1954,26 +1990,38 @@ class VantageConfigurator(weewx.drivers.AbstractConfigurator):
 
     @property
     def usage(self):
-        return """%prog [config_file] [--help] [-y] [--info] [--clear-memory]
-    [--set-interval=MINUTES]
-    [--set-latitude=DEGREE] [--set-longitude=DEGREE]
-    [--set-altitude=FEET] [--set-barometer=inHg]
-    [--set-wind-cup=CODE] [--set-bucket=CODE]
-    [--set-rain-year-start=MM]
-    [--set-offset=VARIABLE,OFFSET]
-    [--set-transmitter-type=CHANNEL,TYPE,TEMP,HUM,REPEATER_ID]
-    [--set-retransmit=[OFF|ON|ON,CHANNEL]]
-    [--set-temperature-logging=[LAST|AVERAGE]]
-    [--set-time] [--set-dst=[AUTO|ON|OFF]]
-    [--set-tz-code=TZCODE] [--set-tz-offset=HHMM]
-    [--set-lamp=[ON|OFF]] [--dump] [--logger-summary=FILE]
-    [--start | --stop]"""
+        return """%prog --help
+       %prog --info [config_file]
+       %prog --current [config_file]
+       %prog --clear-memory [config_file] [-y]
+       %prog --set-interval=MINUTES [config_file] [-y]
+       %prog --set-latitude=DEGREE [config_file] [-y]
+       %prog --set-longitude=DEGREE [config_file] [-y]
+       %prog --set-altitude=FEET [config_file] [-y]
+       %prog --set-barometer=inHg [config_file] [-y]
+       %prog --set-wind-cup=CODE [config_file] [-y]
+       %prog --set-bucket=CODE [config_file] [-y]
+       %prog --set-rain-year-start=MM [config_file] [-y]
+       %prog --set-offset=VARIABLE,OFFSET [config_file] [-y]
+       %prog --set-transmitter-type=CHANNEL,TYPE,TEMP,HUM,REPEATER_ID [config_file] [-y]  
+       %prog --set-retransmit=[OFF|ON|ON,CHANNEL] [config_file] [-y]
+       %prog --set-temperature-logging=[LAST|AVERAGE] [config_file] [-y]
+       %prog --set-time [config_file] [-y]
+       %prog --set-dst=[AUTO|ON|OFF] [config_file] [-y] 
+       %prog --set-tz-code=TZCODE [config_file] [-y]
+       %prog --set-tz-offset=HHMM [config_file] [-y]
+       %prog --set-lamp=[ON|OFF] [config_file] 
+       %prog --dump [--batch-size=BATCH_SIZE] [config_file] [-y]
+       %prog --logger-summary=FILE [config_file] [-y]
+       %prog [--start | --stop] [config_file]"""
 
     def add_options(self, parser):
         super(VantageConfigurator, self).add_options(parser)
         parser.add_option("--info", action="store_true", dest="info",
                           help="To print configuration, reception, and barometer "
                                "calibration information about your weather station.")
+        parser.add_option("--current", action="store_true",
+                          help="To print current LOOP information.")
         parser.add_option("--clear-memory", action="store_true", dest="clear_memory",
                           help="To clear the memory of your weather station.")
         parser.add_option("--set-interval", type=int, dest="set_interval",
@@ -2029,24 +2077,32 @@ class VantageConfigurator(weewx.drivers.AbstractConfigurator):
                           help="Set DST to 'ON', 'OFF', or 'AUTO'")
         parser.add_option("--set-tz-code", type=int, dest="set_tz_code",
                           metavar="TZCODE",
-                          help="Set timezone code to TZCODE. See your Vantage manual for valid codes.")
+                          help="Set timezone code to TZCODE. See your Vantage manual for "
+                               "valid codes.")
         parser.add_option("--set-tz-offset", dest="set_tz_offset",
-                          help="Set timezone offset to HHMM. E.g. '-0800' for U.S. Pacific Time.", metavar="HHMM")
+                          help="Set timezone offset to HHMM. E.g. '-0800' for U.S. Pacific Time.",
+                          metavar="HHMM")
         parser.add_option("--set-lamp", dest="set_lamp",
                           metavar="ON|OFF",
                           help="Turn the console lamp 'ON' or 'OFF'.")
+        parser.add_option("--dump", action="store_true",
+                          help="Dump all data to the archive. "
+                               "NB: This may result in many duplicate primary key errors.")
+        parser.add_option("--batch-size", type=int, default=1, metavar="BATCH_SIZE",
+                          help="Use with option --dump. Pages are read off the console in batches "
+                               "of BATCH_SIZE. A BATCH_SIZE of zero means dump all data first, "
+                               "then put it in the database. This can improve performance in "
+                               "high-latency environments, but requires sufficient memory to "
+                               "hold all station data. Default is 1 (one).")
+        parser.add_option("--logger-summary", type="string",
+                          dest="logger_summary", metavar="FILE",
+                          help="Save diagnostic summary to FILE (for debugging the logger).")
         parser.add_option("--start", action="store_true",
                           help="Start the logger.")
         parser.add_option("--stop", action="store_true",
                           help="Stop the logger.")
-        parser.add_option("--dump", action="store_true",
-                          help="Dump all data to the archive. "
-                               "NB: This may result in many duplicate primary key errors.")
-        parser.add_option("--logger-summary", type="string",
-                          dest="logger_summary", metavar="FILE",
-                          help="Save diagnostic summary to FILE (for debugging the logger).")
 
-    def do_options(self, options, parser, config_dict, prompt):  # @UnusedVariable        
+    def do_options(self, options, parser, config_dict, prompt):
         if options.start and options.stop:
             parser.error("Cannot specify both --start and --stop")
         if options.set_tz_code and options.set_tz_offset:
@@ -2055,6 +2111,8 @@ class VantageConfigurator(weewx.drivers.AbstractConfigurator):
         station = Vantage(**config_dict[DRIVER_NAME])
         if options.info:
             self.show_info(station)
+        if options.current:
+            self.current(station)
         if options.set_interval is not None:
             self.set_interval(station, options.set_interval, options.noprompt)
         if options.set_latitude is not None:
@@ -2091,14 +2149,14 @@ class VantageConfigurator(weewx.drivers.AbstractConfigurator):
             self.set_tz_offset(station, options.set_tz_offset)
         if options.set_lamp:
             self.set_lamp(station, options.set_lamp)
+        if options.dump:
+            self.dump_logger(station, config_dict, options.noprompt, options.batch_size)
+        if options.logger_summary:
+            self.logger_summary(station, options.logger_summary)
         if options.start:
             self.start_logger(station)
         if options.stop:
             self.stop_logger(station)
-        if options.dump:
-            self.dump_logger(station, config_dict, options.noprompt)
-        if options.logger_summary:
-            self.logger_summary(station, options.logger_summary)
 
     @staticmethod           
     def show_info(station, dest=sys.stdout):
@@ -2267,6 +2325,14 @@ class VantageConfigurator(weewx.drivers.AbstractConfigurator):
                         print("      Leaf Temperature %d:           %+.1f F"
                               % (leaf, calibration_dict["leafTemp%d" % leaf]), file=dest)
         print("", file=dest)
+
+    @staticmethod
+    def current(station):
+        """Print a single, current LOOP packet."""
+        print('Querying the station for current weather data...')
+        for pack in station.genDavisLoopPackets(1):
+            print(weeutil.weeutil.timestamp_to_string(pack['dateTime']),
+                  to_sorted_string(pack))
 
     @staticmethod
     def set_interval(station, new_interval_minutes, noprompt):
@@ -2685,7 +2751,7 @@ class VantageConfigurator(weewx.drivers.AbstractConfigurator):
         print("Logger stopped")
 
     @staticmethod
-    def dump_logger(station, config_dict, noprompt):
+    def dump_logger(station, config_dict, noprompt, batch_size=1):
         import weewx.manager
         ans = weeutil.weeutil.y_or_n("Proceeding will dump all data in the logger.\n"
                                      "Are you sure you want to proceed (y/n)? ",
@@ -2694,19 +2760,28 @@ class VantageConfigurator(weewx.drivers.AbstractConfigurator):
             with weewx.manager.open_manager_with_config(config_dict, 'wx_binding',
                                                         initialize=True) as archive:
                 nrecs = 0
-                # Wrap the Vantage generator function in a converter, which will convert the units to the
-                # same units used by the database:
-                converted_generator = weewx.units.GenWithConvert(station.genArchiveDump(), archive.std_unit_system)
+                # Determine whether to use something to show our progress:
+                progress_fn = print_page if batch_size == 0 else None
+
+                # Wrap the Vantage generator function in a converter, which will convert the units
+                # to the same units used by the database:
+                converted_generator = weewx.units.GenWithConvert(
+                    station.genArchiveDump(progress_fn=progress_fn),
+                    archive.std_unit_system)
+
+                # Wrap it again, to dump in the requested batch size
+                converted_generator = weeutil.weeutil.GenByBatch(converted_generator, batch_size)
+
                 print("Starting dump ...")
+
                 for record in converted_generator:
                     archive.addRecord(record)
                     nrecs += 1
-                    if nrecs % 10 == 0:
-                        print("Records processed: %d; Timestamp: %s\r"
-                              % (nrecs, weeutil.weeutil.timestamp_to_string(record['dateTime'])),
-                              end=' ',
-                              file=sys.stdout)
-                        sys.stdout.flush()
+                    print("Records processed: %d; Timestamp: %s\r"
+                          % (nrecs, weeutil.weeutil.timestamp_to_string(record['dateTime'])),
+                          end=' ',
+                          file=sys.stdout)
+                    sys.stdout.flush()
                 print("\nFinished dump. %d records added" % (nrecs,))
         else:
             print("Nothing done.")
@@ -2819,6 +2894,12 @@ class VantageConfEditor(weewx.drivers.AbstractConfEditor):
             print("an ethernet interface.")
             settings['host'] = self._prompt('host')
         return settings
+
+
+def print_page(ipage):
+    print("Requesting page %d/512\r" % ipage, end=' ', file=sys.stdout)
+    sys.stdout.flush()
+
 
 # Define a main entry point for basic testing of the station without weewx
 # engine and service overhead.  Invoke this as follows from the weewx root directory:

@@ -4073,15 +4073,15 @@ class CCommunicationService(object):
         log.debug('startRFThread: spawning RF thread')
         self.running = True
         self.child = threading.Thread(target=self.doRF)
-        self.child.setName('RFComm')
-        self.child.setDaemon(True)
+        self.child.name = 'RFComm'
+        self.child.daemon = True
         self.child.start()
 
     def stopRFThread(self):
         self.running = False
         log.debug('stopRFThread: waiting for RF thread to terminate')
         self.child.join(self.thread_wait)
-        if self.child.isAlive():
+        if self.child.is_alive():
             log.error('unable to terminate RF thread after %d seconds'
                       % self.thread_wait)
         else:

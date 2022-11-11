@@ -1,5 +1,5 @@
 #
-#    Copyright (c) 2018-2019 Tom Keffer <tkeffer@gmail.com>
+#    Copyright (c) 2018-2020 Tom Keffer <tkeffer@gmail.com>
 #
 #    See the file LICENSE.txt for your full rights.
 #
@@ -91,9 +91,7 @@ def accumulateLeaves(d, max_level=99):
             cum_dict = configobj.ConfigObj()
 
     # Now merge my scalars into the results:
-    merge_dict = {}
-    for k in d.scalars:
-        merge_dict[k] = d[k]
+    merge_dict = {k: d[k] for k in d.scalars}
     cum_dict.merge(merge_dict)
     return cum_dict
 
@@ -111,9 +109,10 @@ def patch_config(self_config, indict):
 
     Example:
     >>> import sys
-    >>> c = ConfigObj(StringIO('''[Section1]
+    >>> from six.moves import StringIO
+    >>> c = configobj.ConfigObj(StringIO('''[Section1]
     ... option1 = bar'''))
-    >>> d = ConfigObj(StringIO('''[Section1]
+    >>> d = configobj.ConfigObj(StringIO('''[Section1]
     ...     # This is a Section2 comment
     ...     [[Section2]]
     ...     option2 = foo
@@ -228,54 +227,52 @@ def config_from_str(input_str):
     return config
 
 
-# def deep_copy(old_dict):
-#     """ Return a deepcopy of a ConfigObj."""
-#
-#     # Turn off interpolation. Save the old interpolation value.
-#     old_interpolation = old_dict.main.interpolation
-#     old_dict.main.interpolation = False
-#
-#     # All child dictionaries should be type "Section". The top-level dictionary should
-#     # be type "ConfigObj".
-#     if isinstance(old_dict, configobj.ConfigObj):
-#         new_dict = configobj.ConfigObj(encoding=old_dict.encoding,
-#                                        default_encoding=old_dict.default_encoding)
-#     elif isinstance(old_dict, configobj.Section):
-#         new_dict = configobj.Section(old_dict.parent, old_dict.depth, old_dict.main)
-#     else:
-#         new_dict = dict()
-#
-#     for entry in old_dict:
-#         this_entry = old_dict[entry]
-#         if isinstance(this_entry, dict):
-#             this_entry = deep_copy(this_entry)
-#         elif isinstance(this_entry, list):
-#             # create a copy rather than a reference
-#             this_entry = list(this_entry)
-#         elif isinstance(this_entry, tuple):
-#             # create a copy rather than a reference
-#             this_entry = tuple(this_entry)
-#         new_dict[entry] = this_entry
-#
-#     # Restore the old interpolation value
-#     old_dict.main.interpolation = old_interpolation
-#
-#     return new_dict
+def deep_copy(old_dict, parent=None, depth=None, main=None):
+    """Return a deep copy of a ConfigObj"""
 
-def deep_copy(old_dict):
-    """ Return a deepcopy of a ConfigObj."""
-    import copy
-
-    # Turn off interpolation. It seems to interfere with the deep copying process.
-    # Save the old interpolation value.
-    old_interpolation = old_dict.main.interpolation
-    old_dict.main.interpolation = False
-
-    new_dict = copy.deepcopy(old_dict)
-
-    # Restore the old interpolation value
-    old_dict.main.interpolation = old_interpolation
-
+    # Is this a copy starting from the top level?
+    if isinstance(old_dict, configobj.ConfigObj):
+        new_dict = configobj.ConfigObj('',
+                                       encoding=old_dict.encoding,
+                                       default_encoding=old_dict.default_encoding,
+                                       interpolation=old_dict.interpolation,
+                                       indent_type=old_dict.indent_type)
+        new_dict.initial_comment = list(old_dict.initial_comment)
+    else:
+        # No. It's a copy of something deeper down. If no parent or main is given, then
+        # adopt the parent and main of the incoming dictionary.
+        new_dict = configobj.Section(parent if parent is not None else old_dict.parent,
+                                     depth if depth is not None else old_dict.depth,
+                                     main if main is not None else old_dict.main)
+    for entry in old_dict:
+        # Avoid interpolation by using the version of __getitem__ from dict
+        old_value = dict.__getitem__(old_dict, entry)
+        if isinstance(old_value, configobj.Section):
+            new_value = deep_copy(old_value, new_dict, new_dict.depth + 1, new_dict.main)
+        elif isinstance(old_value, list):
+            # Make a copy
+            new_value = list(old_value)
+        elif isinstance(old_value, tuple):
+            # Make a copy
+            new_value = tuple(old_value)
+        else:
+            # It's a scalar, possibly a string
+            new_value = old_value
+        new_dict[entry] = new_value
+        # A comment is a list of strings. We need to make a copy of the list, but the strings
+        # themselves are immutable, so we don't need to copy them. That means a simple shallow
+        # copy will do:
+        new_dict.comments[entry] = list(old_dict.comments[entry])
+        # An inline comment is either None, or a string. Either way, they are immutable, so
+        # a simple assignment will work:
+        new_dict.inline_comments[entry] = old_dict.inline_comments[entry]
     return new_dict
 
+if __name__ == "__main__":
+    import six
+    if not six.PY3:
+        exit("units.py doctest must be run under Python 3")
+    import doctest
 
+    if not doctest.testmod().failed:
+        print("PASSED")

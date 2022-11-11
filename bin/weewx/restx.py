@@ -1,5 +1,5 @@
 #
-#    Copyright (c) 2009-2019 Tom Keffer <tkeffer@gmail.com>
+#    Copyright (c) 2009-2022 Tom Keffer <tkeffer@gmail.com>
 #
 #    See the file LICENSE.txt for your full rights.
 #
@@ -89,6 +89,7 @@ import platform
 import re
 import socket
 import ssl
+import sys
 import threading
 import time
 
@@ -108,6 +109,7 @@ from weeutil.config import search_up, accumulateLeaves
 from weeutil.weeutil import to_int, to_float, to_bool, timestamp_to_string, to_sorted_string
 
 log = logging.getLogger(__name__)
+
 
 class FailedPost(IOError):
     """Raised when a post fails, and is unlikely to succeed if retried."""
@@ -129,10 +131,6 @@ class SendError(IOError):
     """Raised when unable to send through a socket."""
 
 
-class CertificateError(Exception):
-    """Raised when there's a problem with an SSL certificate"""
-
-
 # ==============================================================================
 #                    Abstract base classes
 # ==============================================================================
@@ -152,12 +150,12 @@ class StdRESTful(weewx.engine.StdService):
     @staticmethod
     def shutDown_thread(q, t):
         """Function to shut down a thread."""
-        if q and t.isAlive():
+        if q and t.is_alive():
             # Put a None in the queue to signal the thread to shutdown
             q.put(None)
             # Wait up to 20 seconds for the thread to exit:
             t.join(20.0)
-            if t.isAlive():
+            if t.is_alive():
                 log.error("Unable to shut down %s thread", t.name)
             else:
                 log.debug("Shut down %s thread.", t.name)
@@ -172,70 +170,62 @@ class RESTThread(threading.Thread):
     
     Offers a few bits of common functionality."""
 
-    def __init__(self, q, protocol_name,
+    def __init__(self,
+                 q,
+                 protocol_name,
                  essentials={},
                  manager_dict=None,
-                 post_interval=None, max_backlog=six.MAXSIZE, stale=None,
-                 log_success=True, log_failure=True,
-                 timeout=10, max_tries=3, retry_wait=5, retry_login=3600, retry_certificate=3600,
+                 post_interval=None,
+                 max_backlog=six.MAXSIZE,
+                 stale=None,
+                 log_success=True,
+                 log_failure=True,
+                 timeout=10,
+                 max_tries=3,
+                 retry_wait=5,
+                 retry_login=3600,
+                 retry_ssl=3600,
                  softwaretype="weewx-%s" % weewx.__version__,
                  skip_upload=False):
         """Initializer for the class RESTThread
-        Required parameters:
 
-          q: An instance of queue.Queue where the records will appear.
+        Args:
 
-          protocol_name: A string holding the name of the protocol.
-          
-        Optional parameters:
-
-          essentials: A dictionary that holds observation types that must
-          not be None for the post to go ahead.
-
-          manager_dict: A manager dictionary, to be used to open up a
-          database manager. Default is None.
-        
-          post_interval: How long to wait between posts.
-          Default is None (post every record).
-          
-          max_backlog: How many records are allowed to accumulate in the queue
-          before the queue is trimmed.
-          Default is six.MAXSIZE (essentially, allow any number).
-          
-          stale: How old a record can be and still considered useful.
-          Default is None (never becomes too old).
-          
-          log_success: If True, log a successful post in the system log.
-          Default is True.
-          
-          log_failure: If True, log an unsuccessful post in the system log.
-          Default is True.
-          
-          timeout: How long to wait for the server to respond before giving up.
-          Default is 10 seconds.
-
-          max_tries: How many times to try the post before giving up.
-          Default is 3
-          
-          retry_wait: How long to wait between retries when failures.
-          Default is 5 seconds.
-          
-          retry_login: How long to wait before retrying a login. Default
-          is 3600 seconds (one hour).
-          
-          retry_certificate: How long to wait before retrying after an SSL certicate error. Default
-          is 3600 seconds (one hour).
-
-          softwaretype: Sent as field "softwaretype in the Ambient post.
-          Default is "weewx-x.y.z where x.y.z is the weewx version.
-
-          skip_upload: Do all record processing, but do not upload the result.
-          Useful for diagnostic purposes when local debugging should not
-          interfere with the downstream data service.  Default is False.
+          q (queue.Queue): An instance of queue.Queue where the records will appear.
+          protocol_name (str): A string holding the name of the protocol.
+          essentials (dict): An optional dictionary that holds observation types that must
+            not be None for the post to go ahead.
+          manager_dict (dict|None): A database manager dictionary, to be used to open up a
+            database manager. Default is None.
+          post_interval (int|None): How long to wait between posts in seconds.
+            Default is None (post every record).
+          max_backlog (int): How many records are allowed to accumulate in the queue
+            before the queue is trimmed. Default is six.MAXSIZE (essentially, allow any number).
+          stale (int|None): How old a record can be and still considered useful.
+            Default is None (never becomes too old).
+          log_success (bool): If True, log a successful post in the system log.
+            Default is True.
+          log_failure (bool): If True, log an unsuccessful post in the system log.
+            Default is True.
+          timeout (int): How long to wait for the server to respond before giving up.
+            Default is 10 seconds.
+          max_tries (int): How many times to try the post before giving up.
+            Default is 3
+          retry_wait (int): How long to wait between retries when failures.
+            Default is 5 seconds.
+          retry_login (int): How long to wait before retrying a login. Default
+            is 3600 seconds (one hour).
+          retry_ssl (int): How long to wait before retrying after an SSL error. Default
+            is 3600 seconds (one hour).
+          softwaretype (str): Sent as field "softwaretype" in the Ambient post.
+            Default is "weewx-x.y.z where x.y.z is the weewx version.
+          skip_upload (bool): Do all record processing, but do not upload the result.
+            Useful for diagnostic purposes when local debugging should not
+            interfere with the downstream data service.  Default is False.
           """
         # Initialize my superclass:
         threading.Thread.__init__(self, name=protocol_name)
-        self.setDaemon(True)
+        self.daemon = True
 
         self.queue = q
         self.protocol_name = protocol_name
@@ -250,7 +240,7 @@ class RESTThread(threading.Thread):
         self.timeout = to_int(timeout)
         self.retry_wait = to_int(retry_wait)
         self.retry_login = to_int(retry_login)
-        self.retry_certificate = to_int(retry_certificate)
+        self.retry_ssl = to_int(retry_ssl)
         self.softwaretype = softwaretype
         self.lastpost = 0
         self.skip_upload = to_bool(skip_upload)
@@ -259,14 +249,23 @@ class RESTThread(threading.Thread):
         """Augment record data with additional data from the archive.
         Should return results in the same units as the record and the database.
         
-        This is a general version that works for:
+        This is a general version that for each of types 'hourRain', 'rain24', and 'dayRain',
+        it checks for existence. If not there, then the database is used to add it. This works for:
           - WeatherUnderground
           - PWSweather
           - WOW
           - CWOP
+
         It can be overridden and specialized for additional protocols.
 
-        returns: A dictionary of weather values"""
+        Args:
+            record (dict): An incoming record that will be augmented. It will not be touched.
+            dbmanager (weewx.manager.Manager|None): An instance of a database manager. If set
+                to None, then the record will not be augmented.
+
+        Returns:
+            dict: A dictionary of augmented weather values
+        """
 
         if dbmanager is None:
             # If we don't have a database, we can't do anything
@@ -296,8 +295,9 @@ class RESTThread(threading.Thread):
                     % dbmanager.table_name, (_time_ts - 3600.0, _time_ts))
                 if _result is not None and _result[0] is not None:
                     if not _result[1] == _result[2] == record['usUnits']:
-                        raise ValueError("Inconsistent units (%s vs %s vs %s) when querying for hourRain"
-                                         % (_result[1], _result[2], record['usUnits']))
+                        raise ValueError(
+                            "Inconsistent units (%s vs %s vs %s) when querying for hourRain"
+                            % (_result[1], _result[2], record['usUnits']))
                     _datadict['hourRain'] = _result[0]
                 else:
                     _datadict['hourRain'] = None
@@ -310,8 +310,9 @@ class RESTThread(threading.Thread):
                     % dbmanager.table_name, (_time_ts - 24 * 3600.0, _time_ts))
                 if _result is not None and _result[0] is not None:
                     if not _result[1] == _result[2] == record['usUnits']:
-                        raise ValueError("Inconsistent units (%s vs %s vs %s) when querying for rain24"
-                                         % (_result[1], _result[2], record['usUnits']))
+                        raise ValueError(
+                            "Inconsistent units (%s vs %s vs %s) when querying for rain24"
+                            % (_result[1], _result[2], record['usUnits']))
                     _datadict['rain24'] = _result[0]
                 else:
                     _datadict['rain24'] = None
@@ -328,8 +329,9 @@ class RESTThread(threading.Thread):
                     % dbmanager.table_name, (_sod_ts, _time_ts))
                 if _result is not None and _result[0] is not None:
                     if not _result[1] == _result[2] == record['usUnits']:
-                        raise ValueError("Inconsistent units (%s vs %s vs %s) when querying for dayRain"
-                                         % (_result[1], _result[2], record['usUnits']))
+                        raise ValueError(
+                            "Inconsistent units (%s vs %s vs %s) when querying for dayRain"
+                            % (_result[1], _result[2], record['usUnits']))
                     _datadict['dayRain'] = _result[0]
                 else:
                     _datadict['dayRain'] = None
@@ -391,14 +393,16 @@ class RESTThread(threading.Thread):
             except FailedPost as e:
                 if self.log_failure:
                     _time_str = timestamp_to_string(_record['dateTime'])
-                    log.error("%s: Failed to publish record %s: %s" % (self.protocol_name, _time_str, e))
-            except CertificateError as e:
-                if self.retry_certificate:
-                    log.error("%s: Bad SSL certificate (%s); waiting %s minutes then retrying",
-                              self.protocol_name, e, self.retry_certificate / 60.0)
-                    time.sleep(self.retry_certificate)
+                    log.error("%s: Failed to publish record %s: %s"
+                              % (self.protocol_name, _time_str, e))
+            except ssl.SSLError as e:
+                if self.retry_ssl:
+                    log.error("%s: SSL error (%s); waiting %s minutes then retrying",
+                              self.protocol_name, e, self.retry_ssl / 60.0)
+                    time.sleep(self.retry_ssl)
                 else:
-                    log.error("%s: Bad SSL certificate; no retry specified. Terminating", self.protocol_name)
+                    log.error("%s: SSL error (%s); no retry specified. Terminating",
+                              self.protocol_name, e)
                     raise
             except Exception as e:
                 # Some unknown exception occurred. This is probably a serious
@@ -465,13 +469,10 @@ class RESTThread(threading.Thread):
                     # If this is not the first time through, sleep a bit before retrying
                     time.sleep(self.retry_wait)
 
-                try:
-                    # Do a single post. The function post_request() can be
-                    # specialized by a RESTful service to catch any unusual
-                    # exceptions.
-                    _response = self.post_request(request, data)
-                except ssl.CertificateError as e:
-                    raise CertificateError(str(e))
+                # Do a single post. The function post_request() can be
+                # specialized by a RESTful service to catch any unusual
+                # exceptions.
+                _response = self.post_request(request, data)
 
                 if 200 <= _response.code <= 299:
                     # No exception thrown and we got a good response code, but
@@ -503,7 +504,7 @@ class RESTThread(threading.Thread):
         """Raises exception AbortedPost if the record should not be posted.
         Otherwise, does nothing"""
         for obs_type in self.essentials:
-            if self.essentials[obs_type] and record.get(obs_type) is None:
+            if to_bool(self.essentials[obs_type]) and record.get(obs_type) is None:
                 raise AbortedPost("Observation type %s missing" % obs_type)
 
     def check_response(self, response):
@@ -533,6 +534,8 @@ class RESTThread(threading.Thread):
         """
         # Data might be a unicode string. Encode it first.
         data_bytes = six.ensure_binary(data) if data is not None else None
+        if weewx.debug >= 2:
+            log.debug("%s url: '%s'", self.protocol_name, request.get_full_url())
         _response = urllib.request.urlopen(request, data=data_bytes, timeout=self.timeout)
         return _response
 
@@ -583,6 +586,7 @@ class RESTThread(threading.Thread):
     def format_url(self, _):
         raise NotImplementedError
 
+
 # ==============================================================================
 #                    Ambient protocols
 # ==============================================================================
@@ -630,7 +634,8 @@ class StdWunderground(StdRESTful):
                 **_ambient_dict)
             self.archive_thread.start()
             self.bind(weewx.NEW_ARCHIVE_RECORD, self.new_archive_record)
-            log.info("Wunderground-PWS: Data for station %s will be posted", _ambient_dict['station'])
+            log.info("Wunderground-PWS: Data for station %s will be posted",
+                     _ambient_dict['station'])
 
         if do_rapidfire_post:
             _ambient_dict.setdefault('server_url', StdWunderground.rf_url)
@@ -649,7 +654,8 @@ class StdWunderground(StdRESTful):
                 **_ambient_dict)
             self.loop_thread.start()
             self.bind(weewx.NEW_LOOP_PACKET, self.new_loop_packet)
-            log.info("Wunderground-RF: Data for station %s will be posted", _ambient_dict['station'])
+            log.info("Wunderground-RF: Data for station %s will be posted",
+                     _ambient_dict['station'])
 
     def new_loop_packet(self, event):
         """Puts new LOOP packets in the loop queue"""
@@ -716,7 +722,7 @@ class StdPWSWeather(StdRESTful):
     """Specialized version of the Ambient protocol for PWSWeather"""
 
     # The URL used by PWSWeather:
-    archive_url = "http://www.pwsweather.com/pwsupdate/pwsupdate.php"
+    archive_url = "https://www.pwsweather.com/pwsupdate/pwsupdate.php"
 
     def __init__(self, engine, config_dict):
         super(StdPWSWeather, self).__init__(engine, config_dict)
@@ -755,7 +761,7 @@ class StdWOW(StdRESTful):
     """
 
     # The URL used by WOW:
-    archive_url = "http://wow.metoffice.gov.uk/automaticreading"
+    archive_url = "https://wow.metoffice.gov.uk/automaticreading"
 
     def __init__(self, engine, config_dict):
         super(StdWOW, self).__init__(engine, config_dict)
@@ -790,16 +796,26 @@ class AmbientThread(RESTThread):
     def __init__(self,
                  q,
                  manager_dict,
-                 station, password, server_url,
+                 station,
+                 password,
+                 server_url,
                  post_indoor_observations=False,
                  api_key=None,  # Not used.
                  protocol_name="Unknown-Ambient",
                  essentials={},
-                 post_interval=None, max_backlog=six.MAXSIZE, stale=None,
-                 log_success=True, log_failure=True,
-                 timeout=10, max_tries=3, retry_wait=5, retry_login=3600, retry_certificate=3600,
+                 post_interval=None,
+                 max_backlog=six.MAXSIZE,
+                 stale=None,
+                 log_success=True,
+                 log_failure=True,
+                 timeout=10,
+                 max_tries=3,
+                 retry_wait=5,
+                 retry_login=3600,
+                 retry_ssl=3600,
                  softwaretype="weewx-%s" % weewx.__version__,
-                 skip_upload=False):
+                 skip_upload=False,
+                 force_direction=False):
 
         """
         Initializer for the AmbientThread class.
@@ -814,7 +830,7 @@ class AmbientThread(RESTThread):
           server_url: An url where the server for this protocol can be found.
         """
         super(AmbientThread, self).__init__(q,
-                                            protocol_name=protocol_name,
+                                            protocol_name,
                                             essentials=essentials,
                                             manager_dict=manager_dict,
                                             post_interval=post_interval,
@@ -826,7 +842,7 @@ class AmbientThread(RESTThread):
                                             max_tries=max_tries,
                                             retry_wait=retry_wait,
                                             retry_login=retry_login,
-                                            retry_certificate=retry_certificate,
+                                            retry_ssl=retry_ssl,
                                             softwaretype=softwaretype,
                                             skip_upload=skip_upload)
         self.station = station
@@ -835,8 +851,11 @@ class AmbientThread(RESTThread):
         self.formats = dict(AmbientThread._FORMATS)
         if to_bool(post_indoor_observations):
             self.formats.update(AmbientThread._INDOOR_FORMATS)
+        self.force_direction = to_bool(force_direction)
+        self.last_direction = 0
 
-    # Types and formats of the data to be published. See https://bit.ly/2TVl4t3
+    # Types and formats of the data to be published.
+    # See https://support.weather.com/s/article/PWS-Upload-Protocol?language=en_US
     # for definitions.
     _FORMATS = {
         'barometer': 'baromin=%.3f',
@@ -881,7 +900,7 @@ class AmbientThread(RESTThread):
     }
 
     _INDOOR_FORMATS = {
-        'inTemp'    : 'indoortempf=%.1f',
+        'inTemp': 'indoortempf=%.1f',
         'inHumidity': 'indoorhumidity=%.0f'}
 
     def format_url(self, incoming_record):
@@ -898,14 +917,19 @@ class AmbientThread(RESTThread):
         # to _liststr:
         for _key in self.formats:
             _v = record.get(_key)
+            # WU claims a station is "offline" if it sends a null wind direction, even when wind
+            # speed is zero. If option 'force_direction' is set, cache the last non-null wind
+            # direction and use it instead.
+            if _key == 'windDir' and self.force_direction:
+                if _v is None:
+                    _v = self.last_direction
+                else:
+                    self.last_direction = _v
             # Check to make sure the type is not null
             if _v is not None:
                 if _key == 'dateTime':
-                    # For dates, convert from time stamp to a string, using
-                    # what the Weather Underground calls "MySQL format." I've
-                    # fiddled with formatting, and it seems that escaping the
-                    # colons helps its reliability. But, I could be imagining
-                    # things.
+                    # Convert from timestamp to string. The results will look something
+                    # like '2020-10-19%2021%3A43%3A18'
                     _v = urllib.parse.quote(str(datetime.datetime.utcfromtimestamp(_v)))
                 # Format the value, and accumulate in _liststr:
                 _liststr.append(self.formats[_key] % _v)
@@ -934,15 +958,31 @@ class AmbientThread(RESTThread):
 class AmbientLoopThread(AmbientThread):
     """Version used for the Rapidfire protocol."""
 
-    def __init__(self, q, manager_dict,
-                 station, password, server_url,
+    def __init__(self,
+                 q,
+                 manager_dict,
+                 station,
+                 password,
+                 server_url,
                  post_indoor_observations=False,
-                 api_key=None,
+                 api_key=None,  # Not used
                  protocol_name="Unknown-Ambient",
                  essentials={},
-                 post_interval=None, max_backlog=six.MAXSIZE, stale=None,
-                 log_success=True, log_failure=True,
-                 timeout=10, max_tries=3, retry_wait=5, rtfreq=2.5):
+                 post_interval=None,
+                 max_backlog=six.MAXSIZE,
+                 stale=None,
+                 log_success=True,
+                 log_failure=True,
+                 timeout=10,
+                 max_tries=3,
+                 retry_wait=5,
+                 retry_login=3600,
+                 retry_ssl=3600,
+                 softwaretype="weewx-%s" % weewx.__version__,
+                 skip_upload=False,
+                 force_direction=False,
+                 rtfreq=2.5  # This is the only one added by AmbientLoopThread
+                 ):
         """
         Initializer for the AmbientLoopThread class.
 
@@ -951,6 +991,7 @@ class AmbientLoopThread(AmbientThread):
           rtfreq: Frequency of update in seconds for RapidFire
         """
         super(AmbientLoopThread, self).__init__(q,
+                                                manager_dict=manager_dict,
                                                 station=station,
                                                 password=password,
                                                 server_url=server_url,
@@ -958,7 +999,6 @@ class AmbientLoopThread(AmbientThread):
                                                 api_key=api_key,
                                                 protocol_name=protocol_name,
                                                 essentials=essentials,
-                                                manager_dict=manager_dict,
                                                 post_interval=post_interval,
                                                 max_backlog=max_backlog,
                                                 stale=stale,
@@ -966,7 +1006,12 @@ class AmbientLoopThread(AmbientThread):
                                                 log_failure=log_failure,
                                                 timeout=timeout,
                                                 max_tries=max_tries,
-                                                retry_wait=retry_wait)
+                                                retry_wait=retry_wait,
+                                                retry_login=retry_login,
+                                                retry_ssl=retry_ssl,
+                                                softwaretype=softwaretype,
+                                                skip_upload=skip_upload,
+                                                force_direction=force_direction)
 
         self.rtfreq = float(rtfreq)
         self.formats.update(AmbientLoopThread.WUONLY_FORMATS)
@@ -993,17 +1038,17 @@ class WOWThread(AmbientThread):
     """Class for posting to the WOW variant of the Ambient protocol."""
 
     # Types and formats of the data to be published:
-    _FORMATS = {'dateTime'   : 'dateutc=%s',
-                'barometer'  : 'baromin=%.3f',
-                'outTemp'    : 'tempf=%.1f',
+    _FORMATS = {'dateTime': 'dateutc=%s',
+                'barometer': 'baromin=%.3f',
+                'outTemp': 'tempf=%.1f',
                 'outHumidity': 'humidity=%.0f',
-                'windSpeed'  : 'windspeedmph=%.0f',
-                'windDir'    : 'winddir=%.0f',
-                'windGust'   : 'windgustmph=%.0f',
+                'windSpeed': 'windspeedmph=%.0f',
+                'windDir': 'winddir=%.0f',
+                'windGust': 'windgustmph=%.0f',
                 'windGustDir': 'windgustdir=%.0f',
-                'dewpoint'   : 'dewptf=%.1f',
-                'hourRain'   : 'rainin=%.2f',
-                'dayRain'    : 'dailyrainin=%.2f'}
+                'dewpoint': 'dewptf=%.1f',
+                'hourRain': 'rainin=%.2f',
+                'dayRain': 'dailyrainin=%.3f'}
 
     def format_url(self, incoming_record):
         """Return an URL for posting using WOW's version of the Ambient
@@ -1023,7 +1068,8 @@ class WOWThread(AmbientThread):
             # Check to make sure the type is not null
             if _v is not None:
                 if _key == 'dateTime':
-                    _v = urllib.parse.quote_plus(datetime.datetime.utcfromtimestamp(_v).isoformat(' '))
+                    _v = urllib.parse.quote_plus(
+                        datetime.datetime.utcfromtimestamp(_v).isoformat(' '))
                 # Format the value, and accumulate in _liststr:
                 _liststr.append(WOWThread._FORMATS[_key] % _v)
         # Now stick all the pieces together with an ampersand between them:
@@ -1066,15 +1112,15 @@ class StdCWOP(StdRESTful):
     default_servers = ['cwop.aprs.net:14580', 'cwop.aprs.net:23']
 
     def __init__(self, engine, config_dict):
-
         super(StdCWOP, self).__init__(engine, config_dict)
 
         _cwop_dict = get_site_dict(config_dict, 'CWOP', 'station')
         if _cwop_dict is None:
             return
 
+        if 'passcode' not in _cwop_dict or _cwop_dict['passcode'] == 'replace_me':
+            _cwop_dict['passcode'] = '-1'
         _cwop_dict['station'] = _cwop_dict['station'].upper()
-        _cwop_dict.setdefault('passcode', '-1')
         _cwop_dict.setdefault('latitude', self.engine.stn_info.latitude_f)
         _cwop_dict.setdefault('longitude', self.engine.stn_info.longitude_f)
         _cwop_dict.setdefault('station_type', config_dict['Station'].get(
@@ -1223,7 +1269,7 @@ class CWOPThread(RESTThread):
         if _humidity is None:
             _humid_str = "h.."
         else:
-            _humid_str = ("h%02d" % int(_humidity + 0.5) ) if _humidity < 99.5 else "h00"
+            _humid_str = ("h%02d" % int(_humidity + 0.5)) if _humidity < 99.5 else "h00"
 
         # Radiation:
         _radiation = record.get('radiation')
@@ -1259,7 +1305,8 @@ class CWOPThread(RESTThread):
                 _server, _port_str = _serv_addr_str.split(":")
                 _port = int(_port_str)
             except ValueError:
-                log.error("%s: Bad server address: '%s'; ignored" , self.protocol_name, _serv_addr_str)
+                log.error("%s: Bad server address: '%s'; ignored", self.protocol_name,
+                          _serv_addr_str)
                 continue
 
             # Try each combination up to max_tries times:
@@ -1352,6 +1399,8 @@ class StdStationRegistry(StdRESTful):
         weewx_info       weewx version
         python_info
         platform_info
+        config_path      Where the configuration file is located.
+        entry_path       The path to the top-level module (usually where weewxd is located)
 
     The station_url is the unique key by which a station is identified.
     """
@@ -1378,11 +1427,17 @@ class StdStationRegistry(StdRESTful):
             log.info("StationRegistry: Station will not be registered: no station_url specified.")
             return
 
-        _registry_dict.setdefault('station_type', config_dict['Station'].get('station_type', 'Unknown'))
+        _registry_dict.setdefault('station_type',
+                                  config_dict['Station'].get('station_type', 'Unknown'))
         _registry_dict.setdefault('description', self.engine.stn_info.location)
         _registry_dict.setdefault('latitude', self.engine.stn_info.latitude_f)
         _registry_dict.setdefault('longitude', self.engine.stn_info.longitude_f)
         _registry_dict.setdefault('station_model', self.engine.stn_info.hardware)
+        _registry_dict.setdefault('config_path', config_dict.get('config_path', 'Unknown'))
+        # Find the top-level module. This is where the entry point will be.
+        _registry_dict.setdefault('entry_path', getattr(sys.modules['__main__'], '__file__',
+                                                        'Unknown')
+)
 
         self.archive_queue = queue.Queue()
         self.archive_thread = StationRegistryThread(self.archive_queue,
@@ -1398,55 +1453,54 @@ class StdStationRegistry(StdRESTful):
 class StationRegistryThread(RESTThread):
     """Concrete threaded class for posting to the weewx station registry."""
 
-    def __init__(self, q, station_url, latitude, longitude,
+    def __init__(self,
+                 q,
+                 station_url,
+                 latitude,
+                 longitude,
                  server_url=StdStationRegistry.archive_url,
                  description="Unknown",
-                 station_type="Unknown", station_model="Unknown",
-                 post_interval=604800, max_backlog=0, stale=None,
-                 log_success=True, log_failure=True,
-                 timeout=60, max_tries=3, retry_wait=5):
+                 station_type="Unknown",
+                 station_model="Unknown",
+                 config_path="Unknown",
+                 entry_path="Unknown",
+                 post_interval=86400,
+                 timeout=60,
+                 **kwargs):
         """Initialize an instance of StationRegistryThread.
         
-        Parameters specific to this class:
+        Args:
 
-          station_url: An URL used to identify the station. This will be
-          used as the unique key in the registry to identify each station.
-          
-          latitude: Latitude of the staion
-          
-          longitude: Longitude of the station
-        
-          server_url: The URL of the registry server. 
-          Default is 'http://weewx.com/register/register.cgi'
-          
-          description: A brief description of the station. 
-          Default is 'Unknown'
-          
-          station_type: The type of station. Generally, this is the name of
-          the driver used by the station. 
-          Default is 'Unknown'
-          
-          station_model: The hardware model, typically the hardware_name
-          property provided by the driver.
-          Default is 'Unknown'.
-
-        Parameters customized for this class:
-          
-          post_interval: How long to wait between posts.
-          Default is 604800 seconds (1 week).
+          q (queue.Queue): An instance of queue.Queue where the records will appear.
+          station_url (str): An URL used to identify the station. This will be
+            used as the unique key in the registry to identify each station.
+          latitude (float): Latitude of the staion
+          longitude (float): Longitude of the station
+          server_url (str): The URL of the registry server.
+            Default is 'http://weewx.com/register/register.cgi'
+          description (str): A brief description of the station.
+            Default is 'Unknown'
+          station_type (str): The type of station. Generally, this is the name of
+            the driver used by the station. Default is 'Unknown'
+          config_path (str): location of the configuration file, used in system
+            registration to determine how weewx might have been installed.
+            Default is 'Unknown'.
+          entry_path (str): location of the top-level module that was executed. Usually this is
+            where 'weewxd' is located. Default is "Unknown".
+          station_model (str): The hardware model, typically the hardware_name property provided
+           by the driver. Default is 'Unknown'.
+          post_interval (int): How long to wait between posts.
+            Default is 86400 seconds (1 day).
+          timeout (int): How long to wait for the server to respond before giving up.
+            Default is 60 seconds.
         """
 
         super(StationRegistryThread, self).__init__(
             q,
             protocol_name='StationRegistry',
             post_interval=post_interval,
-            max_backlog=max_backlog,
-            stale=stale,
-            log_success=log_success,
-            log_failure=log_failure,
             timeout=timeout,
-            max_tries=max_tries,
-            retry_wait=retry_wait)
+            **kwargs)
         self.station_url = station_url
         self.latitude = to_float(latitude)
         self.longitude = to_float(longitude)
@@ -1454,31 +1508,37 @@ class StationRegistryThread(RESTThread):
         self.description = weeutil.weeutil.list_as_string(description)
         self.station_type = station_type
         self.station_model = station_model
+        self.config_path = config_path
+        self.entry_path = entry_path
 
     def get_record(self, dummy_record, dummy_archive):
         _record = {
-            'station_url'   : self.station_url,
-            'description'   : self.description,
-            'latitude'      : self.latitude,
-            'longitude'     : self.longitude,
-            'station_type'  : self.station_type,
-            'station_model' : self.station_model,
-            'python_info'   : platform.python_version(),
-            'platform_info' :  platform.platform(),
-            'weewx_info'    : weewx.__version__,
-            'usUnits'       : weewx.US,
+            'station_url': self.station_url,
+            'description': self.description,
+            'latitude': self.latitude,
+            'longitude': self.longitude,
+            'station_type': self.station_type,
+            'station_model': self.station_model,
+            'python_info': platform.python_version(),
+            'platform_info': platform.platform(),
+            'weewx_info': weewx.__version__,
+            'config_path': self.config_path,
+            'entry_path' : self.entry_path,
+            'usUnits': weewx.US,
         }
         return _record
 
-    _FORMATS = {'station_url'  : 'station_url=%s',
-                'description'  : 'description=%s',
-                'latitude'     : 'latitude=%.4f',
-                'longitude'    : 'longitude=%.4f',
-                'station_type' : 'station_type=%s',
+    _FORMATS = {'station_url': 'station_url=%s',
+                'description': 'description=%s',
+                'latitude': 'latitude=%.4f',
+                'longitude': 'longitude=%.4f',
+                'station_type': 'station_type=%s',
                 'station_model': 'station_model=%s',
-                'python_info'  : 'python_info=%s',
+                'python_info': 'python_info=%s',
                 'platform_info': 'platform_info=%s',
-                'weewx_info'   : 'weewx_info=%s'}
+                'config_path': 'config_path=%s',
+                'entry_path': 'entry_path=%s',
+                'weewx_info': 'weewx_info=%s'}
 
     def format_url(self, record):
         """Return an URL for posting using the StationRegistry protocol."""
@@ -1487,7 +1547,12 @@ class StationRegistryThread(RESTThread):
         for _key in StationRegistryThread._FORMATS:
             v = record[_key]
             if v is not None:
-                _liststr.append(urllib.parse.quote_plus(StationRegistryThread._FORMATS[_key] % v, '='))
+                # Under Python 2, quote_plus() can only accept strings (no unicode).
+                # If necessary, convert.
+                if isinstance(v, six.string_types):
+                    v = six.ensure_str(v)
+                _liststr.append(urllib.parse.quote_plus(StationRegistryThread._FORMATS[_key] % v,
+                                                        '='))
         _urlquery = '&'.join(_liststr)
         _url = "%s?%s" % (self.server_url, _urlquery)
         return _url
@@ -1613,18 +1678,18 @@ AWEKAS = StdAWEKAS
 
 class AWEKASThread(RESTThread):
     _SERVER_URL = 'http://data.awekas.at/eingabe_pruefung.php'
-    _FORMATS = {'barometer'  : '%.3f',
-                'outTemp'    : '%.1f',
+    _FORMATS = {'barometer': '%.3f',
+                'outTemp': '%.1f',
                 'outHumidity': '%.0f',
-                'windSpeed'  : '%.1f',
-                'windDir'    : '%.0f',
-                'windGust'   : '%.1f',
-                'dewpoint'   : '%.1f',
-                'hourRain'   : '%.2f',
-                'dayRain'    : '%.2f',
-                'radiation'  : '%.2f',
-                'UV'         : '%.2f',
-                'rainRate'   : '%.2f'}
+                'windSpeed': '%.1f',
+                'windDir': '%.0f',
+                'windGust': '%.1f',
+                'dewpoint': '%.1f',
+                'hourRain': '%.2f',
+                'dayRain': '%.2f',
+                'radiation': '%.2f',
+                'UV': '%.2f',
+                'rainRate': '%.2f'}
 
     def __init__(self, q, username, password, latitude, longitude,
                  manager_dict,
@@ -1632,7 +1697,7 @@ class AWEKASThread(RESTThread):
                  post_interval=300, max_backlog=six.MAXSIZE, stale=None,
                  log_success=True, log_failure=True,
                  timeout=10, max_tries=3, retry_wait=5,
-                 retry_login=3600, retry_certificate=3600, skip_upload=False):
+                 retry_login=3600, retry_ssl=3600, skip_upload=False):
         """Initialize an instances of AWEKASThread.
 
         Parameters specific to this class:
@@ -1676,7 +1741,7 @@ class AWEKASThread(RESTThread):
                                            max_tries=max_tries,
                                            retry_wait=retry_wait,
                                            retry_login=retry_login,
-                                           retry_certificate=retry_certificate,
+                                           retry_ssl=retry_ssl,
                                            skip_upload=skip_upload)
         self.username = username
         # Calculate and save the password hash
@@ -1785,7 +1850,7 @@ class AWEKASThread(RESTThread):
             elif line.startswith(b"Benutzer/Passwort Fehler"):
                 raise BadLogin(line)
             else:
-                raise FailedPost("Server returned '%s'" % line)
+                raise FailedPost("Server returned '%s'" % six.ensure_text(line))
 
 
 ###############################################################################

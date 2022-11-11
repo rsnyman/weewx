@@ -161,7 +161,7 @@ h2 {
     font-size: 140%;
     font-weight: bold;
     margin-bottom: 0;
-    margin-top: 1.5em;
+    margin-top: 2em;
 }
 
 h3 {
@@ -171,6 +171,7 @@ h3 {
     font-size: 120%;
     font-weight: bold;
     margin-bottom: 0;
+    margin-top: 1.5em;
 }
 
 h4 {
@@ -230,8 +231,8 @@ caption {
 
 p .code, td .code, li .code, dd .code {
     background-color: #ecf3f3;
-    padding-left: 1px;
-    padding-right: 1px;
+    padding-left: 3px;
+    padding-right: 3px;
 }
 
 .symcode {
@@ -271,7 +272,7 @@ p .symcode {
 .tty {
     font-family: 'Inconsolata', monospace;
     background-color: #ecf3f3;
-    border: 1px solid #ddddaa;
+    border: 1px solid #ccd3d3;
     padding: 3px 8px 3px 8px;
     margin: 5px 15px 5px 15px;
     white-space: pre;
@@ -315,6 +316,13 @@ p .symcode {
     border: 1px solid #cccccc;
     box-shadow: 2px 2px 2px #dddddd;
     display: inline-block;
+}
+
+.example_text {
+    font-family: 'Noto Sans', sans-serif;
+    font-weight: bold;
+    background-color: #ecf3f3;
+    padding: 0px 4px 0px 4px;
 }
 
 .image {
@@ -392,6 +400,17 @@ p .symcode {
 .os-icons {
     float: right;
     margin-left: 20px;
+}
+
+/* Multi-column list */
+.mc-list {
+    column-count: 3;
+    list-style: none;
+}
+
+ul.mc-list > li {
+    display: inline-block;
+    width: 100%;
 }
 
 /*

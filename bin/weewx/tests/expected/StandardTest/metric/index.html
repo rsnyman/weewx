@@ -13,7 +13,7 @@
   }
 </style>
 </head>
-<body>
+<body style="background-color:aliceblue">
 
   <h1>Tests for tag $station</h1>
   <table>
@@ -31,7 +31,7 @@
     </tr>
     <tr>
       <td align="right">Altitude (default unit):</td>
-      <td align="left">100 meters</td>
+      <td align="left">100 m</td>
     </tr>
     <tr>
       <td align="right">Altitude (feet):</td>
@@ -39,7 +39,7 @@
     </tr>
     <tr>
       <td align="right">Altitude (meters):</td>
-      <td align="left">100 meters</td>
+      <td align="left">100 m</td>
     </tr>
   </table>
   
@@ -89,7 +89,7 @@
     </tr>
     <tr>
       <td>Outside Temperature with nonsense binding $current($data_binding='foo_binding').outTemp</td>
-      <td>?'foo_binding'?</td>
+      <td>$current($data_binding='foo_binding').outTemp</td>
     </tr>
     <tr>
       <td>Outside Temperature with explicit time</td>
@@ -100,7 +100,7 @@
       <td>   N/A</td>
     </tr>
     <tr>
-      <td>Outside Temperature trend (3 hours)</td>
+      <td>Outside Temperature trend (3 Stunden)</td>
       <td>8.4&#176;C</td>
     </tr>
     <tr>
@@ -109,14 +109,14 @@
     </tr>
     <tr>
       <td>Trend with nonsense type</td>
-      <td>?'foobar'?</td>
+      <td>$trend.foobar</td>
     </tr>
     <tr>
       <td>Barometer (normal)</td>
       <td>989.1 mbar</td>
     </tr>
     <tr>
-      <td>Barometer trend where previous value is known to be None (3 hours)</td>
+      <td>Barometer trend where previous value is known to be None (3 Stunden)</td>
       <td>   N/A</td>
     </tr>
     <tr>
@@ -156,12 +156,16 @@
       <td>29 kph from 128&#176;</td>
     </tr>
     <tr>
+      <td>Wind (beaufort)</td>
+      <td>4</td>
+    </tr>
+    <tr>
       <td>Rain Rate</td>
       <td>0.0 mm/h</td>
     </tr>
     <tr>
       <td>Inside Temperature</td>
-      <td>   N/A</td>
+      <td>20.0&#176;C</td>
     </tr>
     <tr>
       <td>Test tag "exists" for an existent type: $current.outTemp.exists</td>
@@ -184,6 +188,14 @@
       <td>FALSE</td>
     </tr>
     <tr>
+      <td>Test tag "has_data" for the last hour: $hour.outTemp.has_data</td>
+      <td>TRUE</td>
+    </tr>
+    <tr>
+      <td>Test tag "has_data" for the last hour of a nonsense type: $hour.nonsense.has_data</td>
+      <td>FALSE</td>
+    </tr>
+    <tr>
       <td>Test for a bad observation type on a $current tag: $current.foobar</td>
       <td>?'foobar'?</td>
     </tr>
@@ -199,7 +211,7 @@
     </tr>
     <tr>
         <td>Start of hour (unix epoch time):</td>
-        <td>1283533200.0</td>
+        <td>1283533200</td>
     </tr>
     <tr>
       <td>Max Temperature</td>
@@ -219,6 +231,106 @@
     </tr>
   </table>
   
+  <h1>Wind related tags</h1>
+    <h2>$current</h2>
+      <table>
+        <tr>
+          <td>$current.windSpeed</td>
+          <td>29 kph</td>
+        </tr>
+          <td>$current.windDir</td>
+          <td>128&#176;</td>
+        </tr>
+        <tr>
+          <td>$current.windGust</td>
+          <td>35 kph</td>
+        </tr>
+        <tr>
+          <td>$current.windGustDir</td>
+          <td>128&#176;</td>
+        </tr>
+      </table>
+
+    <h2>$hour</h2>
+      <table>
+        <tr>
+          <td>Hour start, stop</td>
+          <td>1283533200<br/>1283536800</td>
+        </tr>
+        <tr>
+          <td>$hour.wind.vecdir</td>
+          <td>127&#176;</td>
+        </tr>
+        <tr>
+          <td>$hour.wind.vecavg</td>
+          <td>29 kph</td>
+        </tr>
+        <tr>
+          <td>$hour.wind.max</td>
+          <td>35 kph</td>
+        </tr>
+        <tr>
+          <td>$hour.wind.gustdir</td>
+          <td>126&#176;</td>
+        </tr>
+        <tr>
+          <td>$hour.wind.maxtime</td>
+          <td>10:30</td>
+        </tr>
+      </table>
+
+      <h2>$month</h2>
+        <table>
+          <tr>
+            <td>Month start, stop</td>
+            <td>1283324400<br/>1285916400</td>
+          </tr>
+          <tr>
+            <td>$month.windSpeed.avg</td>
+            <td>18 kph</td>
+          </tr>
+          <tr>
+            <td>$month.wind.avg</td>
+            <td>18 kph</td>
+          </tr>
+          <tr>
+            <td>$month.wind.vecavg</td>
+            <td>13 kph</td>
+          </tr>
+          <tr>
+            <td>$month.wind.vecdir</td>
+            <td>61&#176;</td>
+          </tr>
+          <tr>
+            <td>$month.windGust.max</td>
+            <td>39 kph</td>
+          </tr>
+          <tr>
+            <td>$month.wind.max</td>
+            <td>39 kph</td>
+          </tr>
+          <tr>
+            <td>$month.wind.gustdir</td>
+            <td>90&#176;</td>
+          </tr>
+          <tr>
+            <td>$month.windGust.maxtime</td>
+            <td>03-Sep-2010 01:00</td>
+          </tr>
+          <tr>
+            <td>$month.wind.maxtime</td>
+            <td>03-Sep-2010 01:00</td>
+          </tr>
+          <tr>
+            <td>$month.windSpeed.max</td>
+            <td>32 kph</td>
+          </tr>
+          <tr>
+            <td>$month.windDir.avg</td>
+            <td>168&#176;</td>
+          </tr>
+    </table>
+
   <h1>Iterate over three hours:</h1>
   <table>
     <tr>
@@ -387,7 +499,7 @@
       <td>$day.outTemp.min.mbar</td>
     </tr>
     <tr>
-      <td>Max value for a type with no data: $day.soilMoist3.max</td>
+      <td>Max value for a type with no data: $day.UV.max</td>
       <td>   N/A</td>
     </tr>
     <tr>
@@ -411,19 +523,19 @@
       <td>31 kph</td>
     </tr>
     <tr>
-      <td>High Wind from "$day.windSpeed.avg"</td>
+      <td>Average wind from "$day.windSpeed.avg"</td>
       <td>31 kph</td>
     </tr>
     <tr>
-      <td>Average aggregation (wind)</td>
+      <td>Average wind w/alt_binding: "$day(data_binding='alt_binding').wind.avg"</td>
+      <td>11 kph</td>
+    </tr>
+    <tr>
+      <td>RMS aggregation: "$day.wind.rms"</td>
       <td>31 kph</td>
     </tr>
     <tr>
-      <td>RMS aggregation(wind)</td>
-      <td>31 kph</td>
-    </tr>
-    <tr>
-      <td>Aggregation Vector Average (wind)</td>
+      <td>Vector average: "$day.wind.vecavg"</td>
       <td>30 kph</td>
     </tr>
     <tr>
@@ -435,18 +547,26 @@
       <td>FALSE</td>
     </tr>
     <tr>
-      <td>Test tag "exists" with an existing type that has no data $day.soilMoist3.exists</td>
+      <td>Test tag "exists" with an existing type that has no data $day.UV.exists</td>
       <td>TRUE</td>
     </tr>
     <tr>
-      <td>Test tag "has_data" with existent type that has no data $day.soilMoist3.has_data</td>
+      <td>Test tag "has_data" with existent type that has no data $day.UV.has_data</td>
       <td>FALSE</td>
     </tr>
     <tr>
       <td>Test tag "has_data" with existent type that has data $day.outTemp.has_data</td>
       <td>TRUE</td>
     </tr>
-      <tr>
+    <tr>
+      <td>Test tag "not_null" with existent type that has no data $day.UV.not_null</td>
+      <td>0</td>
+    </tr>
+    <tr>
+      <td>Test tag "not_null" with existent type that has data $day.outTemp.not_null</td>
+      <td>1</td>
+    </tr>
+    <tr>
       <td>Test for a bad observation type on a $day tag: $day.foobar.min</td>
       <td>$day.foobar.min</td>
     </tr>
@@ -537,6 +657,37 @@
     </tr>
   </table>
 
+  <h1>Test for various versions of $colorize</h1>
+  <table>
+    <tr>
+      <td align="right">Current temperature using $colorize_1</td>
+      <td align="left" style="background-color:moccasin">17.7&#176;C</td>
+    </tr>
+    <tr>
+      <td align="right">Current temperature using $colorize_2</td>
+      <td align="left" style="background-color:moccasin">17.7&#176;C</td>
+    </tr>
+    <tr>
+      <td align="right">Current temperature using $colorize_3</td>
+      <td align="left" style="background-color:moccasin">17.7&#176;C</td>
+    </tr>
+  </table>
+  <p>Tests at timestamp 1280692800, when the temperature is null:</p>
+  <table>
+    <tr>
+      <td align="right">Null temperature using $colorize_1</td>
+      <td align="left" style="background-color:#00000000">   N/A</td>
+    </tr>
+    <tr>
+      <td align="right">Null temperature using $colorize_2</td>
+      <td align="left" style="background-color:#00000000">   N/A</td>
+    </tr>
+    <tr>
+      <td align="right">Null temperature using $colorize_3</td>
+      <td align="left" style="background-color:lightgray">   N/A</td>
+    </tr>
+  </table>
+
   <hr/>
   <h1>Tests for tag $Extras</h1>
   <table>
@@ -560,7 +711,7 @@
     </tr>
     <tr>
        <td align="right">Moon:</td>
-       <td align="left">Waning crescent (29%full)</td>
+       <td align="left">abnehmend (29%full)</td>
     </tr>
   </table>
   
@@ -620,7 +771,7 @@
   <table>
     <tr>
       <td align="right">Tag &quot;$obs.label.outTemp&quot;</td>
-      <td align="left">Outside Temperature</td>
+      <td align="left">Au&#223;entemperatur</td>
     </tr>
   </table>
 
@@ -666,7 +817,7 @@
       </tr>
       <tr>
         <td align="right">$current.windDir.ordinal_compass</td>
-        <td align="left">SE</td>
+        <td align="left">SO</td>
       </tr>
       <tr>
         <td align="right">$current.dateTime</td>
@@ -732,21 +883,56 @@
         <td align="right">$year.rain.sum_le((0.1, 'inch', 'group_rain'))</td>
         <td align="left">122</td>
       </tr>
+      <tr>
+        <td align="right">$year.outTemp.avg_ge((41, 'degree_F', 'group_temperature'))</td>
+        <td align="left">153</td>
+      </tr>
+      <tr>
+        <td align="right">$year.outTemp.avg_le((32, 'degree_F', 'group_temperature'))</td>
+        <td align="left">80</td>
+      </tr>
   </table>
 
-  <h1>Day images</h1>
-  <p>
-  <img src="daytempdew.png" alt="temperatures" />
-  <img src="daytempchill.png" alt="heatchill" /> 
-  <img src="dayrain.png" alt="rain" />
-  <img src="daywind.png" alt="wind" />
-  <img src="daybarometer.png" alt="barometer"/>
-  <img src="daywinddir.png" alt="Hi Wind" />
-  <img src="dayinside.png"  alt="Inside" /> 
-  <img src="daywindvec.png" alt="Wind Vector" />
-  <img src="dayrx.png" alt="day rx percent"/>
-  </p>
-
+  <hr/>
+  <h1>Tests for $gettext</h1>
+  <table>
+    <tr>
+      <td align="right">$lang</td>
+      <td align="left">de</td>
+    </tr>
+    <tr>
+      <td align="right">$page</td>
+      <td align="left">test</td>
+    </tr>
+    <tr>
+      <td align="right">$gettext("Foo")</td>
+      <td align="left">Foo</td>
+    </tr>
+    <tr>
+      <td align="right">$gettext("Today")</td>
+      <td align="left">Heute</td>
+    </tr>
+    <tr>
+      <td align="right">$pgettext("test","Plots")</td>
+      <td align="left">test</td>
+    </tr>
+    <tr>
+      <td align="right">$pgettext($page,"Plots")</td>
+      <td align="left">Diagramme</td>
+    </tr>
+    <tr>
+      <td align="right">$pgettext($page,"Something")</td>
+      <td align="left">Something</td>
+    </tr>
+    <tr>
+      <td align="right">$pgettext("Foo","Plots")</td>
+      <td align="left">Plots</td>
+    </tr>
+    <tr>
+      <td align="right">$pgettext("Foo","Bar")</td>
+      <td align="left">Bar</td>
+    </tr>
+  </table>
   <hr/>
 
 </body>
