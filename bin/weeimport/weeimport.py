@@ -734,30 +734,30 @@ class Source(object):
                     _msg = "Field '%s' not found in source "\
                            "data." % self.map['dateTime']['field_name']
                     raise WeeImportFieldError(_msg)
-                # now process the raw date time data
-                if isinstance(_raw_dateTime, numbers.Number) or _raw_dateTime.isdigit():
-                    # Our dateTime is a number, is it a timestamp already?
-                    # Try to use it and catch the error if there is one and
-                    # raise it higher.
-                    try:
+                # Now process the raw date time data. First attempt to parse
+                # the data with strptime() and the raw date-time format string,
+                # wrap in  a try..except to catch the exception if the raw
+                # data cannot be parsed by strptime().
+                try:
+                    _datetm = time.strptime(_raw_dateTime,
+                                            self.raw_datetime_format)
+                except ValueError:
+                    # strptime cannot parse the raw data, perhaps the raw data
+                    # is already an epoch timestamp
+                    if isinstance(_raw_dateTime, numbers.Number) or _raw_dateTime.isdigit():
+                        # the raw dateTime data is numeric, so treat it as a
+                        # timestamp
                         _rec_dateTime = int(_raw_dateTime)
-                    except ValueError:
+                    else:
+                        # the data is not numeric, so it cannot be a timestamp
+                        # and strptime() cannot parse it. We cannot continue
+                        # without a valid dateTime field so raise an exception
                         _msg = "Invalid '%s' field. Cannot convert '%s' to " \
                                "timestamp." % (self.map['dateTime']['field_name'],
                                                _raw_dateTime)
                         raise ValueError(_msg)
                 else:
-                    # it's a non-numeric string so try to parse it and catch
-                    # the error if there is one and raise it higher
-                    try:
-                        _datetm = time.strptime(_raw_dateTime,
-                                                self.raw_datetime_format)
-                        _rec_dateTime = int(time.mktime(_datetm))
-                    except ValueError:
-                        _msg = "Invalid '%s' field. Cannot convert '%s' to " \
-                               "timestamp." % (self.map['dateTime']['field_name'],
-                                               _raw_dateTime)
-                        raise ValueError(_msg)
+                    _rec_dateTime = int(time.mktime(_datetm))
                 # if we have a timeframe of concern does our record fall within
                 # it
                 if (self.first_ts is None and self.last_ts is None) or \
