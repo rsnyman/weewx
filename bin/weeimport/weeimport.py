@@ -1,5 +1,5 @@
 #
-#    Copyright (c) 2009-2022 Tom Keffer <tkeffer@gmail.com> and Gary Roderick
+#    Copyright (c) 2009-2023 Tom Keffer <tkeffer@gmail.com> and Gary Roderick
 #
 #    See the file LICENSE.txt for your full rights.
 #
