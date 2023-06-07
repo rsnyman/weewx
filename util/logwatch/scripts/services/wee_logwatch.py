@@ -2633,12 +2633,14 @@ epilog = """This script will analyse WeeWX log entries and generate the WeeWX
 def main():
     """The main routine that kicks everything off.
 
-    Can be run directly like a standard WeeWX utility or can be called as
-    logwatch module. If called with o options then it is assumed that
-    logwatch has made the call. Otherwise the options are processed and
-    executed as applicable,
+    Can be run directly like a standard WeeWX utility or can be called as a
+    logwatch module. If called with no options it is assumed that logwatch has
+    made the call. Otherwise, the options are processed and executed as
+    applicable.
     """
 
+    # lookup dict for converting report detail level descriptors to an integer
+    # in the range 0-10 incl
     detail_lookup = {'low': 0, 'medium': 5, 'high': 10}
 
     # create a command line parser
@@ -2659,52 +2661,61 @@ def main():
     # work out a default for when we are invoked directly.
     parser.add_option("--detail", dest="detail_level", type=str,
                       metavar="LOGWATCH_DETAIL_LEVEL",
-                      help="Logwatch detail level. Positive interger from 0 (least detail) "
+                      help="Logwatch detail level. Positive integer from 0 (least detail) "
                            "to 10 (most detail) or low, medium or high.")
     parser.add_option("--version", dest="version", action="store_true",
                       help="Display WeeWX logwatch script version number.")
 
-    # now we are ready to parse the command line:
+    # now parse the command line
     (options, args) = parser.parse_args()
 
-    # do we have any options or args?
+    # Check if we have been called by logwatch or directly. The difference will
+    # be in the command line options.
     if all([v is None for v in options.__dict__.values()]) and len(args) == 0:
-        # we have no options or args so logwatch must have called us so process
-        # whatever log entries logwatch sends us
+        # We have no options or args so logwatch must have called us. We will
+        # be processing whatever log entries logwatch sends us.
+
         # first obtain the detail level we are to use, this will have been set
-        # by the logwatch --detail command line option but we can find it in in
+        # by the logwatch --detail command line option, but we can find it in
         # the environment variable 'LOGWATCH_DETAIL_LEVEL'
         logwatch_detail = int(os.environ.get('LOGWATCH_DETAIL_LEVEL', 0))
-        # first obtain a WeeWXLogwatchEngine object
+        # now obtain a WeeWXLogwatchEngine object
         logwatch_controller = WeeWXLogwatchEngine(detail=logwatch_detail)
     else:
-        # we have one or more options or one or more args so process them
+        # We have one or more command line options, so we are being called
+        # directly. Process the options as required.
 
-        # display wee_import version info
+        # --version. Display our version number then exit.
         if options.version:
             print("WeeWX logwatch script version: %s" % WEEWX_LOGWATCH_VERSION)
             exit(0)
 
-        # if we made it here we must be going to process some logs from a
-        # non-logwatch source
+        # if we made it here we must be going to process some logs
 
-        # get the detail level to be used
+        # first get the detail level to be used, we want both the numeric
+        # equivalent and a string version
         try:
             logwatch_detail = int(options.detail_level)
             detail_str = options.detail_level
         except (TypeError, ValueError):
-            # can't convert to an integer, perhaps it is low, medium or high or
-            # was not specified
-            # first try None
+            # can't convert the detail_level option to an integer, perhaps it
+            # is 'low', 'medium' or 'high' or was not specified
+            # first check if it was not specified (ie None), if it is None
+            # force the detail level to 0 (low)
             if options.detail_level is None:
                 logwatch_detail = 0
                 detail_str = "LOW (0)"
             else:
+                # otherwise we have a string, check if it is one of our known
+                # strings by looking up our detail level dict
                 logwatch_detail = detail_lookup.get(options.detail_level.lower())
                 if logwatch_detail is not None:
+                    # we found a known string so construct a suitable string
+                    # representation
                     detail_str = "%s (%d)" % (options.detail_level.upper(),
                                               logwatch_detail)
                 else:
+                    # we didn't find a known string so default to 0 (low)
                     logwatch_detail = 0
                     detail_str = "LOW (0)"
         # say what we are doing...and with what
