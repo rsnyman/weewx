@@ -2136,34 +2136,67 @@ class WeeWXLogwatchEngine(object):
 class LogwatchProcessor(object):
     """Base class to process log files.
 
+    Class LogwatchProcessor knows how to:
+    - add regex used as filters
+    - ingest a log entry line
+    - generate summary and various itemised reports
+
+    Class LogwatchProcessor is used as the base class for defining classes to
+    process log entry lines from the WeeWX core code or installed add-ons. In
+    many cases there will be no need to extend class LogwatchProcessor, just
+    base the new class on class LogwatchProcessor and initialise it with the
+    appropriate config items. The class LogwatchProcessor methods may be
+    overriden, in particular the report generation methods, to handle any
+    specific requirements of a particular add-on.
     """
 
     def __init__(self, service_config, summary_levels, detail=0):
         # save our config
         self.service_config = service_config
-        # Get a tuple containing the summary report items to be displayed given
-        # the detail level. The detail level will be an integer from 0 (least
-        # detail) to 10 (most detail) incl, but our summary report content is
-        # likely defined much more coarsely. So find the highest summary report
-        # level (ie the key) that does not exceed 'detail'.
+        # Get a tuple containing the summary report items to be displayed in
+        # the generated report. The items displayed may vary with the detail
+        # level. The detail level will be an integer from 0 (least detail) to
+        # 10 (most detail) incl, but our possible summary report content is
+        # likely defined much more coarsely.
 
         # first get a list of summary report levels that meet (ie do not
         # exceed) our required detail level
+
+        # assume our result is an empty tuple
         _tuple = tuple()
+        #  now try to obtain the summary report fields from our summary levels
+        #  config but be prepared to catch the error if a summary levels config
+        #  was not provided or is incorrectly structured
         try:
+            # get a list of the detail levels defined in the summary levels
+            # config and obtain the highest defined level that does not exceed
+            # our detail level
             _levels = [k for k in summary_levels.keys() if k <= detail]
             key = max(_levels)
             # now we can get our tuple of summary report items
             _tuple = summary_levels[key]
         except (NameError, KeyError, AttributeError):
+            # for some reason we could not obtain the summary report items from
+            # the summary level config, so try to obtain a list of all known
+            # summary report items from the summary report config
             try:
+                # get the list of dicts that define all our known summary
+                # items
                 _summary_list = service_config.get('report', {}).get('summary', [])
+                # now extract just the keys, this results in a list of know
+                # summary items
                 _fields = [k.keys() for k in _summary_list]
+                # and convert our list to a tuple
                 _tuple = tuple(_fields)
             except (KeyError, AttributeError):
+                # if we could not get the list of all known summary items there
+                # is nothing more we can do, just return any empty tuple
                 pass
+        # save a tuple of summary fields we will report
         self.summary_fields = _tuple
+        # save the logwatch level of detail to be used
         self.detail = detail
+
         # create a dict to hold our results
         self.results = {}
 
@@ -2201,7 +2234,7 @@ class LogwatchProcessor(object):
 
     @property
     def report_config(self):
-        """My ingest config."""
+        """My report config."""
 
         return self.service_config.get('report', {})
 
@@ -2222,8 +2255,8 @@ class LogwatchProcessor(object):
         """Process a log entry line.
 
         Ingest a log entry line looking for a match. If a match is found
-        extract and save the relevant info. If a match is found return True,
-        if no match is found return False.
+        extract and save the relevant info and return True, if no match is
+        found return False.
         """
 
         # do we have any 'sum' regex's
@@ -2247,7 +2280,8 @@ class LogwatchProcessor(object):
                     self.results['itemised'][section_name] = {}
                 our_results = self.results['itemised'][section_name]
                 for regex_name, regex in section_content.items():
-                    # do we have a key = value (compiled regex) pair or another dict
+                    # do we have a key = value (compiled regex) pair or another
+                    # dict
                     if not hasattr(regex, 'items'):
                         # it's a key = value (compiled regex) pair so just execute
                         # the regex and store the results if applicable
@@ -2288,6 +2322,9 @@ class LogwatchProcessor(object):
 
     def ingest_itemised(self, line, key, ):
         """Ingest an itemised regex."""
+
+        # TODO. Does this method need to be defined?
+        pass
 
     def generate_summary_report(self, is_empty, detail=0):
         """Generate our contribution to the summary report."""
@@ -2423,15 +2460,28 @@ class LogwatchProcessor(object):
         pass
 
     def get_result(self, field_name, results):
-        """Obtain a result given a result field name."""
+        """Obtain a result given a result field name.
 
+        Recursively process the results dict looking for field_name. If found
+        return the value, if not found return None.
+        """
+
+        # is field_name in this result level
         if field_name in results:
+            # it is so return the value
             return results[field_name]
+        # it is not in this result level so iterate over all our results at
+        # this level looking for lower level results
         for val in results.values():
+            # is this result value a dict, if so recursively call our self to
+            # look for the field we are seeking
             if hasattr(val, 'items'):
                 rec_result = self.get_result(field_name, val)
+                # a result of None means the field we seek was not found, so
+                # only return the result if it was not None
                 if rec_result is not None:
                     return rec_result
+        # if we made it here we could not find the field concerned so return None
         return None
 
 
