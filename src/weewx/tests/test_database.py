@@ -19,8 +19,9 @@ import weeutil.logger
 
 weeutil.logger.setup('weetest_database')
 
-archive_sqlite = {'database_name': '/var/tmp/weewx_test/weedb.sdb', 'driver':'weedb.sqlite'}
-archive_mysql  = {'database_name': 'test_weedb', 'user':'weewx1', 'password':'weewx1', 'driver':'weedb.mysql'}
+archive_sqlite = {'database_name': '/var/tmp/weewx_test/weedb.sdb', 'driver': 'weedb.sqlite'}
+archive_mysql  = {'database_name': 'test_weedb', 'user': 'weewx1', 'password': 'weewx1', 'driver': 'weedb.mysql'}
+archive_postgres  = {'database_name': 'test_weedb', 'user': 'weewx1', 'password': 'weewx1', 'driver': 'weedb.postgres'}
 
 archive_schema = [('dateTime',             'INTEGER NOT NULL UNIQUE PRIMARY KEY'),
                   ('usUnits',              'INTEGER NOT NULL'),
@@ -37,17 +38,24 @@ start_ts = int(time.mktime((2012, 7, 1, 00, 00, 0, 0, 0, -1))) # 1 July 2012
 stop_ts = start_ts + interval * (nrecs-1)
 timevec = [start_ts+i*interval for i in range(nrecs)]
 
+
 def timefunc(i):
     return start_ts + i*interval
+
+
 def barfunc(i):
     return 30.0 + 0.01*i
+
+
 def temperfunc(i):
     return 68.0 + 0.1*i
 
+
 def expected_record(irec):
-    _record = {'dateTime': timefunc(irec), 'interval': int(interval/60), 'usUnits' : 1,
+    _record = {'dateTime': timefunc(irec), 'interval': int(interval/60), 'usUnits': 1,
                'outTemp': temperfunc(irec), 'barometer': barfunc(irec), 'inTemp': 70.0 + 0.1*irec}
     return _record
+
 
 def gen_included_recs(timevec, start_ts, stop_ts, agg_interval):
     """Generator function that marches down a set of aggregation intervals. Each yield returns
@@ -58,7 +66,8 @@ def gen_included_recs(timevec, start_ts, stop_ts, agg_interval):
             if span[0] < ts <= span[1]:
                 included.add(irec)
         yield included
-    
+
+
 def genRecords():
     for irec in range(nrecs):
         _record = expected_record(irec)
@@ -301,12 +310,27 @@ class TestMySQL(Common, unittest.TestCase):
                 raise unittest.case.SkipTest(e)
         super().setUp()
 
+
+class TestPostgreSQL(Common, unittest.TestCase):
     
+    def __init__(self, *args, **kwargs):
+        self.archive_db_dict = archive_postgres
+        super().__init__(*args, **kwargs)
+
+    def setUp(self):
+        try:
+            import psycopg2
+        except ImportError as e:
+            raise unittest.case.SkipTest(e)
+        super().setUp()
+
+
 def suite():
     tests = ['test_open_no_archive', 'test_open_unitialized_archive',
              'test_open_with_create_no_archive', 'test_open_with_create_uninitialized',
              'test_empty_archive', 'test_add_archive_records', 'test_get_records', 'test_update']
-    suite = unittest.TestSuite(list(map(TestSqlite, tests)) + list(map(TestMySQL, tests)))
+    suite = unittest.TestSuite(list(map(TestSqlite, tests)) + list(map(TestMySQL, tests)) +
+                               list(map(TestPostgreSQL, tests)))
     suite.addTest(TestDatabaseDict('test_get_database_dict'))
     return suite
 

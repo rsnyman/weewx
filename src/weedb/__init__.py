@@ -118,6 +118,12 @@ def drop(db_dict):
 
 class Connection(object):
     """Abstract base class, representing a connection to a database."""
+    # SQL statements used by the metadata in the daily summaries.
+    meta_create_str = "CREATE TABLE %s_day__metadata (name CHAR(20) NOT NULL " \
+                      "UNIQUE PRIMARY KEY, value TEXT);"
+    meta_replace_str = "REPLACE INTO %s_day__metadata VALUES(?, ?)"
+    meta_select_str = "SELECT value FROM %s_day__metadata WHERE name=?"
+    sql_replace_str = "REPLACE INTO %s_day_%s VALUES(%s)"
 
     def __init__(self, connection, database_name, dbtype):
         """Superclass should raise exception of type weedb.OperationalError
@@ -129,6 +135,10 @@ class Connection(object):
     def cursor(self):
         """Returns an appropriate database cursor."""
         raise NotImplementedError
+
+    def quote(self, name):
+        """Quote an identifier, if necessary"""
+        return name
 
     def execute(self, sql_string, sql_tuple=()):
         """Execute a sql statement. This version does not return a cursor,
@@ -224,4 +234,3 @@ class Transaction(object):
             self.cursor.close()
         except DatabaseError:
             pass
-

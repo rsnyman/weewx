@@ -12,6 +12,8 @@ sqdb1_dict = {'database_name': '/var/tmp/weewx_test/sqdb1.sdb', 'driver': 'weedb
 sqdb2_dict = {'database_name': '/usr/local/sqdb2.sdb', 'driver': 'weedb.sqlite', 'timeout': '2'}
 mysql1_dict = {'database_name': 'test_weewx1', 'user': 'weewx1', 'password': 'weewx1', 'driver': 'weedb.mysql'}
 mysql2_dict = {'database_name': 'test_weewx1', 'user': 'weewx2', 'password': 'weewx2', 'driver': 'weedb.mysql'}
+postgres1_dict = {'database_name': 'test_weewx1', 'user': 'weewx1', 'password': 'weewx1', 'driver': 'weedb.postgres'}
+postgres2_dict = {'database_name': 'test_weewx1', 'user': 'weewx2', 'password': 'weewx2', 'driver': 'weedb.postgres'}
 
 # Double check that we have the necessary permissions (or lack thereof):
 try:
@@ -63,11 +65,19 @@ class Common(unittest.TestCase):
             except ImportError as e:
                 raise unittest.case.SkipTest(e)
         try:
+            import psycopg2
+        except ImportError as e:
+            raise unittest.case.SkipTest(e)
+        try:
             weedb.drop(mysql1_dict)
         except weedb.NoDatabase:
             pass
         try:
             weedb.drop(sqdb1_dict)
+        except weedb.NoDatabase:
+            pass
+        try:
+            weedb.drop(postgres1_dict)
         except weedb.NoDatabase:
             pass
 
@@ -76,18 +86,28 @@ class Common(unittest.TestCase):
         mysql_dict['host'] = 'foohost'
         with self.assertRaises(weedb.CannotConnectError):
             weedb.connect(mysql_dict)
+        postgres_dict = dict(postgres1_dict)
+        postgres_dict['host'] = 'foohost'
+        with self.assertRaises(weedb.CannotConnectError):
+            weedb.connect(postgres_dict)
 
     def test_bad_password(self):
         mysql_dict = dict(mysql1_dict)
         mysql_dict['password'] = 'badpw'
         with self.assertRaises(weedb.BadPasswordError):
             weedb.connect(mysql_dict)
+        postgres_dict = dict(postgres1_dict)
+        postgres_dict['password'] = 'badpw'
+        with self.assertRaises(weedb.BadPasswordError):
+            weedb.connect(postgres_dict)
 
     def test_drop_nonexistent_database(self):
         with self.assertRaises(weedb.NoDatabase):
             weedb.drop(mysql1_dict)
         with self.assertRaises(weedb.NoDatabase):
             weedb.drop(sqdb1_dict)
+        with self.assertRaises(weedb.NoDatabase):
+            weedb.drop(postgres1_dict)
 
     def test_drop_nopermission(self):
         weedb.create(mysql1_dict)
@@ -98,12 +118,17 @@ class Common(unittest.TestCase):
         # we have no write permission
         with self.assertRaises(weedb.NoDatabaseError):
             weedb.drop(sqdb2_dict)
+        weedb.create(postgres1_dict)
+        with self.assertRaises(weedb.PermissionError):
+            weedb.drop(postgres2_dict)
 
     def test_create_nopermission(self):
         with self.assertRaises(weedb.PermissionError):
             weedb.create(mysql2_dict)
         with self.assertRaises(weedb.PermissionError):
             weedb.create(sqdb2_dict)
+        with self.assertRaises(weedb.PermissionError):
+            weedb.create(postgres2_dict)
 
     def test_double_db_create(self):
         weedb.create(mysql1_dict)
@@ -112,12 +137,17 @@ class Common(unittest.TestCase):
         weedb.create(sqdb1_dict)
         with self.assertRaises(weedb.DatabaseExists):
             weedb.create(sqdb1_dict)
+        weedb.create(postgres1_dict)
+        with self.assertRaises(weedb.DatabaseExists):
+            weedb.create(postgres1_dict)
 
     def test_open_nonexistent_database(self):
         with self.assertRaises(weedb.OperationalError):
             connect = weedb.connect(mysql1_dict)
         with self.assertRaises(weedb.OperationalError):
             connect = weedb.connect(sqdb1_dict)
+        with self.assertRaises(weedb.OperationalError):
+            connect = weedb.connect(postgres1_dict)
 
     def test_select_nonexistent_database(self):
         mysql_dict = dict(mysql1_dict)
@@ -133,6 +163,16 @@ class Common(unittest.TestCase):
         # There's no analogous operation with sqlite. You
         # must create the database in order to open it.
 
+        postgres_dict = dict(postgres1_dict)
+        postgres_dict.pop('database_name')
+        connect = weedb.connect(postgres_dict)
+        cursor = connect.cursor()
+        # Earlier versions of MySQL would raise error number 1146, "Table doesn't exist".
+        with self.assertRaises((weedb.NoDatabaseError, weedb.NoTableError)):
+            cursor.execute("SELECT foo from test_weewx1.bar")
+        cursor.close()
+        connect.close()
+
     def test_select_nonexistent_table(self):
         def test(db_dict):
             weedb.create(db_dict)
@@ -146,6 +186,7 @@ class Common(unittest.TestCase):
 
         test(mysql1_dict)
         test(sqdb1_dict)
+        test(postgres1_dict)
 
     def test_double_table_create(self):
         def test(db_dict):
@@ -160,6 +201,7 @@ class Common(unittest.TestCase):
 
         test(mysql1_dict)
         test(sqdb1_dict)
+        test(postgres1_dict)
 
     def test_select_nonexistent_column(self):
         def test(db_dict):
@@ -174,6 +216,7 @@ class Common(unittest.TestCase):
 
         test(mysql1_dict)
         test(sqdb1_dict)
+        test(postgres1_dict)
 
     def test_duplicate_key(self):
         def test(db_dict):
@@ -189,6 +232,7 @@ class Common(unittest.TestCase):
 
         test(mysql1_dict)
         test(sqdb1_dict)
+        test(postgres1_dict)
 
 
 if __name__ == '__main__':

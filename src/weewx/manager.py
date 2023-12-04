@@ -125,13 +125,19 @@ class Manager(object):
         try:
             self.sqlkeys = self.connection.columnsOf(self.table_name)
         except weedb.ProgrammingError:
+            # PostgreSQL doesn't throw any errors, so we have to work around that.
+            # TODO: This may hide some issues, need to do something better here
+            self.sqlkeys = []
+
+        if not self.sqlkeys:
             # Database exists, but is uninitialized. Did the caller supply
             # a schema?
             if schema is None:
                 # No. Nothing to be done.
                 log.error("Cannot get columns of table %s, and no schema specified",
                           self.table_name)
-                raise
+                raise weedb.ProgrammingError('Cannot get columns of table %s, and no schema specified' %
+                                             self.table_name)
             # Database exists, but has not been initialized. Initialize it.
             self._initialize_database(schema)
             # Try again:
@@ -280,9 +286,10 @@ class Manager(object):
             # Old style schema:
             table_schema = schema
 
-        # List comprehension of the types, joined together with commas. Put the SQL type in
-        # backquotes, because at least one of them ('interval') is a MySQL reserved word
-        sqltypestr = ', '.join(["`%s` %s" % _type for _type in table_schema])
+        # List comprehension of the types, joined together with commas. Quote the SQL type
+        # because at least one of them ('interval') is a MySQL reserved word
+        sqltypestr = ', '.join(["%s %s" % (self.connection.quote(col), _type)
+                                for col, _type in table_schema])
 
         try:
             with weedb.Transaction(self.connection) as cursor:
@@ -309,6 +316,10 @@ class Manager(object):
 
     def _sync(self):
         Manager._create_sync(self)
+
+    def quote(self, name):
+        """A shortcut to the underlying connection's quote method"""
+        return self.connection.quote(name)
 
     def lastGoodStamp(self):
         """Retrieves the epoch time of the last good archive record.
@@ -444,8 +455,8 @@ class Manager(object):
         value_list = [record[k] for k in key_list]
 
         # This will a string of sql types, separated by commas. Because some weewx sql keys
-        # (notably 'interval') are reserved words in MySQL, put them in backquotes.
-        k_str = ','.join(["`%s`" % k for k in key_list])
+        # (notably 'interval') are reserved words in MySQL, quote them
+        k_str = ','.join([self.connection.quote(k) for k in key_list])
         # This will be a string with the correct number of placeholder
         # question marks:
         q_str = ','.join('?' * len(key_list))
@@ -1022,12 +1033,6 @@ class DaySummaryManager(Manager):
         ]
     }
 
-    # SQL statements used by the metadata in the daily summaries.
-    meta_create_str = "CREATE TABLE %s_day__metadata (name CHAR(20) NOT NULL " \
-                      "UNIQUE PRIMARY KEY, value TEXT);"
-    meta_replace_str = "REPLACE INTO %s_day__metadata VALUES(?, ?)"
-    meta_select_str = "SELECT value FROM %s_day__metadata WHERE name=?"
-
     def __init__(self, connection, table_name='archive', schema=None):
         """Initialize an instance of DaySummaryManager
 
@@ -1113,7 +1118,7 @@ class DaySummaryManager(Manager):
                 self._initialize_day_table(obs[0], obs[1].lower(), cursor)
 
             # Now create the meta table...
-            cursor.execute(DaySummaryManager.meta_create_str % self.table_name)
+            cursor.execute(self.connection.meta_create_str % self.table_name)
             # ... then put the version number in it:
             self._write_metadata('Version', DaySummaryManager.version, cursor)
 
@@ -1612,7 +1617,7 @@ class DaySummaryManager(Manager):
             _write_tuple = (_sod,) + day_accum[_summary_type].getStatsTuple()
             # ... and an appropriate SQL command with the correct number of question marks ...
             _qmarks = ','.join(len(_write_tuple) * '?')
-            _sql_replace_str = "REPLACE INTO %s_day_%s VALUES(%s)" % (
+            _sql_replace_str = self.connection.sql_replace_str % (
                 self.table_name, _summary_type, _qmarks)
             # ... and write to the database. In case the type doesn't appear in the database,
             # be prepared to catch an exception:
@@ -1650,7 +1655,7 @@ class DaySummaryManager(Manager):
         Returns:
             str|None: Value of the metadata field. Returns None if no value was found.
         """
-        _row = self.getSql(DaySummaryManager.meta_select_str % self.table_name, (key,), cursor)
+        _row = self.getSql(self.connection.meta_select_str % self.table_name, (key,), cursor)
         return _row[0] if _row else None
 
     def _write_metadata(self, key, value, cursor=None):
@@ -1664,8 +1669,7 @@ class DaySummaryManager(Manager):
         _cursor = cursor or self.connection.cursor()
 
         try:
-            _cursor.execute(DaySummaryManager.meta_replace_str % self.table_name,
-                            (key, value))
+            _cursor.execute(self.connection.meta_replace_str % (self.table_name,), (key, value))
         finally:
             if cursor is None:
                 _cursor.close()

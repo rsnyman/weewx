@@ -18,6 +18,8 @@ from weeutil.weeutil import version_compare
 sqlite_db_dict = {'database_name': '/var/tmp/test.sdb', 'driver': 'weedb.sqlite', 'timeout': '2'}
 mysql_db_dict = {'database_name': 'test_weewx1', 'user': 'weewx1', 'password': 'weewx1',
                  'driver': 'weedb.mysql'}
+postgres_db_dict = {'database_name': 'test_weewx1', 'user': 'weewx1', 'password': 'weewx1',
+                    'driver': 'weedb.postgres'}
 
 # Schema summary:
 # (col_number, col_name, col_type, can_be_null, default_value, part_of_primary)
@@ -244,11 +246,29 @@ class TestMySQL(Common):
             self.assertEqual(_v, None)
 
 
+class TestPostgreSQL(Common):
+
+    def __init__(self, *args, **kwargs):
+        self.db_dict = postgres_db_dict
+        super().__init__(*args, **kwargs)
+
+    def test_variable(self):
+        import psycopg2
+        weedb.create(self.db_dict)
+        with weedb.connect(self.db_dict) as _connect:
+            _v = _connect.get_variable('autocommit')
+            self.assertTrue(_v[1].lower() in ['on', 'off'])
+            _v = _connect.get_variable('foo')
+            self.assertIsNone(_v)
+        _connect.close()
+
+
 def suite():
     tests = ['test_drop', 'test_double_create', 'test_no_db', 'test_no_tables',
              'test_create', 'test_bad_table', 'test_select', 'test_bad_select',
              'test_rollback', 'test_transaction', 'test_variable']
-    return unittest.TestSuite(list(map(TestSqlite, tests)) + list(map(TestMySQL, tests)))
+    return unittest.TestSuite(list(map(TestSqlite, tests)) + list(map(TestMySQL, tests)) +
+                              list(map(TestPostgreSQL, tests)))
 
 
 if __name__ == '__main__':

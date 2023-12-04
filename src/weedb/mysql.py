@@ -141,6 +141,11 @@ class Connection(weedb.Connection):
         # obliged to include a wrapper around it:
         return Cursor(self)
 
+    def quote(self, name):
+        """Quote an identifier"""
+        # MySQL uses the non-standard ` for quoting identifiers
+        return '`%s`' % name
+
     @guard
     def tables(self):
         """Returns a list of tables in the database."""

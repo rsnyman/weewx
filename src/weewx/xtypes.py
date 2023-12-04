@@ -232,8 +232,9 @@ class ArchiveTable(XType):
         else:
 
             # No aggregation
-            sql_str = "SELECT dateTime, %s, usUnits, `interval` FROM %s " \
-                      "WHERE dateTime > ? AND dateTime <= ?" % (obs_type, db_manager.table_name)
+            sql_str = "SELECT dateTime, %s, usUnits, %s FROM %s " \
+                      "WHERE dateTime > ? AND dateTime <= ?" % (
+                          obs_type, db_manager.quote('interval'), db_manager.table_name)
 
             std_unit_system = None
 
@@ -305,13 +306,13 @@ class ArchiveTable(XType):
         # Aggregations 'vecdir' and 'vecavg' require built-in math functions,
         # which were introduced in sqlite v3.35.0, 12-Mar-2021. If they don't exist, then
         # weewx will raise an exception of type "weedb.OperationalError".
-        'vecdir': "SELECT SUM(`interval` * windSpeed * COS(RADIANS(90 - windDir))), "
-                  "       SUM(`interval` * windSpeed * SIN(RADIANS(90 - windDir))) "
+        'vecdir': "SELECT SUM(%(interval)s * windSpeed * COS(RADIANS(90 - windDir))), "
+                  "       SUM(%(interval)s * windSpeed * SIN(RADIANS(90 - windDir))) "
                   "FROM %(table_name)s "
                   "WHERE dateTime > %(start)s AND dateTime <= %(stop)s ",
-        'vecavg': "SELECT SUM(`interval` * windSpeed * COS(RADIANS(90 - windDir))), "
-                  "       SUM(`interval` * windSpeed * SIN(RADIANS(90 - windDir))), "
-                  "       SUM(`interval`) "
+        'vecavg': "SELECT SUM(%(interval)s * windSpeed * COS(RADIANS(90 - windDir))), "
+                  "       SUM(%(interval)s * windSpeed * SIN(RADIANS(90 - windDir))), "
+                  "       SUM(%(interval)s) "
                   "FROM %(table_name)s "
                   "WHERE dateTime > %(start)s AND dateTime <= %(stop)s "
                   "AND windSpeed is not null"
@@ -359,6 +360,7 @@ class ArchiveTable(XType):
             sql_type = obs_type
 
         interpolate_dict = {
+            'interval': db_manager.quote('interval'),
             'aggregate_type': aggregate_type,
             'sql_type': sql_type,
             'table_name': db_manager.table_name,
@@ -421,10 +423,11 @@ class ArchiveTable(XType):
         if obs_type != 'wind':
             raise weewx.UnknownType(obs_type)
 
-        sql_stmt = "SELECT `interval`, windSpeed, windDir " \
+        sql_stmt = "SELECT %(interval)s, windSpeed, windDir " \
                    "FROM %(table_name)s " \
                    "WHERE dateTime > %(start)s AND dateTime <= %(stop)s;" \
                    % {
+                       'interval': db_manager.quote('interval'),
                        'table_name': db_manager.table_name,
                        'start': timespan.start,
                        'stop': timespan.stop
@@ -1039,10 +1042,10 @@ class WindVec(XType):
         else:
             # No aggregation desired. However, we have will have to assemble the wind vector from
             # its flattened types. This SQL select string will select the proper wind types
-            sql_str = 'SELECT dateTime, %s, %s, usUnits, `interval` FROM %s ' \
+            sql_str = 'SELECT dateTime, %s, %s, usUnits, %s FROM %s ' \
                       'WHERE dateTime >= ? AND dateTime <= ?' \
                       % (WindVec.windvec_types[obs_type][0], WindVec.windvec_types[obs_type][1],
-                         db_manager.table_name)
+                         db_manager.quote('interval'), db_manager.table_name)
             std_unit_system = None
 
             for record in db_manager.genSql(sql_str, timespan):

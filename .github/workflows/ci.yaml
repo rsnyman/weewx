@@ -16,11 +16,14 @@ jobs:
           python3-ephem \
           python3-mock \
           python3-mysqldb \
+          python3-psycopg2 \
           python3-serial \
           python3-usb \
           python3-pip \
           mariadb-client \
           mariadb-server \
+          postgresql \
+          postgresql-client \
           rsync \
           sqlite
 

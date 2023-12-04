@@ -94,8 +94,8 @@ class CommonWeightTests(object):
             result4 = self.db_manager.getSql("SELECT SUM(sumtime) FROM archive_day_%s" % key)
             self.assertEqual(result3, result4)
 
-            result5 = self.db_manager.getSql("SELECT SUM(%s * `interval` * 60) FROM archive"
-                                             % archive_key)
+            result5 = self.db_manager.getSql("SELECT SUM(%s * %s * 60) FROM archive"
+                                             % (archive_key, self.database.quote('interval')))
             result6 = self.db_manager.getSql("SELECT SUM(wsum) FROM archive_day_%s" % key)
             if result5[0] is None:
                 self.assertEqual(result6[0], 0.0)
